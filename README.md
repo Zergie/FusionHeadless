@@ -62,7 +62,7 @@ POST /exec
 Content-Type: application/json
 
 {
-  "code": "ui.messageBox('Hello from FusionHeadless!')"
+  "code": "app.activeDocument.name"
 }
 ```
 
@@ -89,7 +89,6 @@ result = sk.name
 
 ## 💡 Tips
 - `app` = `adsk.core.Application.get()` is automatically injected
-- `ui` = user interface object (`app.userInterface`)
 - `adsk` = Fusion 360 Python API module
 - Use `"result = ..."` in `exec` mode to return a value
 
@@ -107,7 +106,6 @@ This server runs arbitrary code in your Fusion 360 session.
 Make sure:
 - You run it only on localhost
 - You don’t expose it via port forwarding or firewalls
-- You consider adding token-based access control (see TODO below)
 
 ## 📚 Additional Endpoints
 
@@ -124,5 +122,3 @@ Exports the active document or component/body to a STEP file or STL file. Return
 - `filename`:  optional, the name of the file to export to (with extension)
 - `component`: optional, the name of the component to export (if not specified, exports the active document)
 - `body`: optional, the name of the body to export (if not specified, exports the entire component)
-
-#### 🔁 Response

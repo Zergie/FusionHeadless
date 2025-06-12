@@ -47,6 +47,10 @@ def test(file_path, context = {}):
     with open(file_path, 'r') as file:
         code = file.read()
 
+    for k, v in context.items():
+        if k in ['app', 'adsk']:
+            context[k] = ContextVariable(k)
+
     source = "\n".join(
         [code] +
         ["", f"result = handle(**{repr(context)})"]

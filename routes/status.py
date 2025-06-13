@@ -1,4 +1,3 @@
-
 """
 Module for checking the server status.
 """

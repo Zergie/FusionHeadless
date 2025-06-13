@@ -12,6 +12,26 @@ class ContextVariable:
     def __repr__(self):
         return self.name
 
+def raise_error(resp_status, resp_reason, resp_data, file_path_hint=None):
+    try:
+        error_data = json.loads(resp_data)
+    except json.JSONDecodeError:
+        error_data = resp_data
+
+    if isinstance(error_data, dict):
+        if 'traceback' in error_data:
+            traceback = error_data['traceback'].strip()
+            if file_path_hint:
+                traceback = traceback.replace("<string>", file_path_hint)
+            print(f"{traceback}")
+        elif 'message' in error_data:
+            print(f"{error_data['message'].strip()}")
+    else:
+        print(f"{error_data}")
+    
+    print(f"HttpException {resp_status}: {resp_reason}")    
+    return ""
+
 def get(endpoint, params=None):
     path = endpoint
     if params:
@@ -25,11 +45,11 @@ def get(endpoint, params=None):
     conn.close()
 
     if resp.status != 200:
-        raise Exception(f"Error {resp.status}: {resp.reason} - {resp_data}")
-    
+        return raise_error(resp.status, resp.reason, resp_data)
+
     return json.loads(resp_data)
 
-def post(endpoint, data=None):
+def post(endpoint, data=None, file_path_hint=None):
     body = json.dumps(data) if data is not None else None
 
     conn = http.client.HTTPConnection(host, port)
@@ -39,8 +59,8 @@ def post(endpoint, data=None):
     conn.close()
 
     if resp.status != 200:
-        raise Exception(f"Error {resp.status}: {resp.reason} - {resp_data}")
-    
+        return raise_error(resp.status, resp.reason, resp_data, file_path_hint)
+
     return json.loads(resp_data)
 
 def test(file_path, context = {}):
@@ -56,6 +76,6 @@ def test(file_path, context = {}):
         ["", f"result = handle(**{repr(context)})"]
     )
     #print(f">> /exec:\n{source}")
-    print(post("/exec", {"code": source}))
+    print(post("/exec", {"code": source}, file_path_hint=file_path))
 
     

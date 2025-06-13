@@ -5,7 +5,7 @@ constructs an appropriate file path in the system's temporary directory, and use
 exportManager to export the selected item in the requested format (STEP or STL).
 """
 
-import os, tempfile
+import os, tempfile, uuid
 
 def handle(path:str, request:dict, app) -> any:
     design = app.activeProduct
@@ -15,14 +15,7 @@ def handle(path:str, request:dict, app) -> any:
     temp_dir = tempfile.gettempdir()
 
     extension = path.split("/")[2]
-    if "filename" in request:
-        path = os.path.join(temp_dir, request["filename"])
-    elif "component" in request:
-        path = os.path.join(temp_dir, f"{request['component']}.{extension}")
-    elif "body" in request:
-        path = os.path.join(temp_dir, f"{request['body']}.{extension}")
-    else:
-        path = os.path.join(temp_dir, f"exported.{extension}")
+    path = os.path.join(temp_dir, f"{uuid.uuid4().hex}.{extension}")
 
     if "component" in request:
         items = [x for x in design.rootComponent.allOccurrences if x.component.name == request["component"]]

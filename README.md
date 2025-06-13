@@ -97,8 +97,11 @@ result = sk.name
 ```bash
 curl -X POST http://localhost:5000/eval \
   -H "Content-Type: application/json" \
-  -d '{"mode": "eval", "code": "app.activeDocument.name"}'
+  -d '{"code": "app.activeDocument.name"}'
 ```
+
+Note on wsl: If you are using WSL, you might want to setup `Mirrored Mode WSL2 Networking`.
+
 
 
 ## 🔐 Security
@@ -119,6 +122,5 @@ Returns a list of all components of the active document.
 Exports the active document or component/body to a STEP file or STL file. Returns the file path.
 
 #### 🧠 Parameters:
-- `filename`:  optional, the name of the file to export to (with extension)
 - `component`: optional, the name of the component to export (if not specified, exports the active document)
 - `body`: optional, the name of the body to export (if not specified, exports the entire component)

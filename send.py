@@ -3,6 +3,7 @@
 import http.client
 import json
 import argparse
+from jsonpath_ng.ext import parse
 from urllib.parse import urlencode
 
 host = 'localhost'
@@ -36,6 +37,26 @@ def raise_error(resp_status, resp_reason, resp_data, file_path_hint=None):
     
     print(f"HttpException {resp_status}: {resp_reason}")    
     return ""
+
+def pprint(response):
+    if isinstance(response, (dict, list)):
+        try:
+            from pygments import highlight
+            from pygments.lexers import JsonLexer
+            from pygments.formatters import TerminalFormatter
+            colored = True
+        except ImportError:
+            colored = False
+
+        json_str = json.dumps(response, indent=2, ensure_ascii=False)
+        if colored:
+            print(highlight(json_str, JsonLexer(), TerminalFormatter()))
+        else:
+            print(json_str)
+    elif isinstance(response, bytes):
+        print(response.decode('utf-8'))
+    else:
+        print(response)
 
 def get(endpoint, params=None):
     path = endpoint if endpoint.startswith('/') else f"/{endpoint}"
@@ -85,9 +106,9 @@ def test(file_path, context = {}):
             context[k] = ContextVariable(k)
 
     data = {
-        "imports": "\n".join([
-            'sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(),"..","..","..","..","..","Roaming","Autodesk","Autodesk Fusion 360", "API", "AddIns", "FusionHeadless", "routes")))',
-        ]),
+        # "imports": "\n".join([
+        #     'sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(),"..","..","..","..","..","Roaming","Autodesk","Autodesk Fusion 360", "API", "AddIns", "FusionHeadless", "routes")))',
+        # ]),
         "code": "\n".join([
             code,
             "",
@@ -96,10 +117,11 @@ def test(file_path, context = {}):
     }
 
     # lineNo = 0
-    # for line in source.splitlines():
+    # for line in data['code'].splitlines():
     #     lineNo += 1
     #     print(f"{lineNo:4d} │ {line}")
-    print(post("/exec", data, file_path_hint=file_path))
+    response = post("/exec", data, file_path_hint=file_path)
+    pprint(response)
 
     
 
@@ -112,7 +134,7 @@ def main():
     parser.add_argument('--post', "-p", action='store_true', help='Send a POST request with JSON data.')
     parser.add_argument('--data', "-d", type=str, help='JSON data to send with POST request.')
     parser.add_argument('--output', "-o", type=str, help='File path hint for error messages.')
-
+    parser.add_argument('--xpath', "-x", type=str, help='XPath to extract data from the response.')
     args = parser.parse_args()
 
     if args.get:
@@ -126,10 +148,15 @@ def main():
     else:
         print("Error: You must specify either --get or --post.")
     
+    if args.xpath:
+        jsonpath_expr = parse(args.xpath)
+        matches = jsonpath_expr.find(response)
+        response = [match.value for match in matches]
+
     if args.output:
-        open(args.output, 'wb').write(response)
+        json.dump(response, open(args.output, 'w'), indent=2, ensure_ascii=False)
     else:
-        print(response)
+        pprint(response)
 
 if __name__ == "__main__":
     main()

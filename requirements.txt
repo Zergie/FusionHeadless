@@ -1,0 +1,2 @@
+jsonpath-ng==1.7.0
+Pygments==2.19.1

@@ -6,7 +6,7 @@
         {
             "label": "run",
             "type": "process",
-            "command": "pypy3",
+            "command": "C:\\Python313\\python.exe",
             "args": [
                 "${file}"
             ],            

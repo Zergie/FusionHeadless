@@ -5,32 +5,51 @@ import adsk.core
 import json
 import traceback
 import os, sys
+from urllib.parse import urlparse, parse_qs
+
+def get_context(additional={}):
+    context = {
+        "adsk": adsk,
+        "app": adsk.core.Application.get(),
+        "ui": adsk.core.Application.get().userInterface,
+        "os": os,
+        "sys": sys,
+    }
+    context.update(additional)
+    return context
+
+def execute_code(code: str|dict, context: dict = None):
+    if context is None:
+        context = get_context()
+    
+    if isinstance(code, str):
+        exec(code, context)
+    else:
+        exec(code.get("code", ""), context)
+    return context.get("result", None)
 
 class RequestHandler(BaseHTTPRequestHandler):
     def _do_ANY(self, request):
-        context = {
-            "adsk": adsk,
-            "app": adsk.core.Application.get(),
-            "os": os,
-            "sys": sys,
-            "path": self.path,
-            "request": request,
-        }
+        parsed_url = urlparse(self.path)
+        path = parsed_url.path
+        query = parse_qs(parsed_url.query)
+        context = get_context({ "path": path, "query": query, "request": request })
         result = None
 
         try:
-            if self.path == "/eval":
+            if path == "/eval":
                 result = eval(request.get("code", ""), context)
-            elif self.path == "/exec":
-                exec(context.get("imports", ""), context)
-                exec(request.get("code", ""), context)
-                result = context.get("result", None)
+            elif path == "/exec":
+                if request.get("ui_thread", False):
+                    adsk.core.Application.get().fireCustomEvent('FusionHeadless.ExecOnUiThread', request.get("code", ""))
+                else:
+                    result = execute_code(request, context)
             else:
-                handler = get_handler(self.path)
+                handler = get_handler(path)
                 if handler:
                     result = handler(**{k: v for k, v in context.items() if k in handler.__code__.co_varnames})
                 else:
-                    return self.send_error(404, f"Route {self.path} not defined")
+                    return self.send_error(404, f"Route {path} not defined")
         
             if hasattr(result, 'send') and callable(getattr(result, 'send')):
                 result.send(self)

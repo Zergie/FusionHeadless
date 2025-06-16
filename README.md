@@ -63,6 +63,7 @@ Content-Type: application/json
 
 {
   "code": "app.activeDocument.name"
+  "ui_thread": true
 }
 ```
 
@@ -89,8 +90,9 @@ result = sk.name
 
 ## 💡 Tips
 - automatically injects into the global context:
-  - `app` = `adsk.core.Application.get()`
   - `adsk` = Fusion 360 Python API module
+  - `app` = `adsk.core.Application.get()`
+  - `ui` = `adsk.core.Application.get().userInterface`
   - `os` = Python's `os` module
   - `sys` = Python's `sys` module
 - Use `"result = ..."` in `exec` mode to return a value

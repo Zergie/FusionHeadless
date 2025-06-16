@@ -60,4 +60,4 @@ def handle(path:str, app) -> any:
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { "path" : "/list/bodies1", "app": None })
+    _client_.test(__file__, { "path" : "/list/bodies", "app": None })

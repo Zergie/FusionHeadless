@@ -1,0 +1,11 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "FusionHeadless",
+  "name": "FusionHeadless",
+  "description": "Expose Fusion 360 API over HTTP via eval/exec for headless scripting.",
+  "author": "https://github.com/Zergie",
+  "version": "0.1.0",
+  "runOnStartup": true,
+  "entry": "FusionHeadless.py"
+}

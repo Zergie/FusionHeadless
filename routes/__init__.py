@@ -1,13 +1,21 @@
 from ..route_registry import register
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-from . import status
+import status
 register("/status", status.handle)
 
-from . import list
+import list
 register("/list/components", list.handle)
 register("/list/bodies", list.handle)
 
-from . import export
+import export
 register("/export/step", export.handle)
 register("/export/stl", export.handle)
+
+import list_projects
+register("/list/projects", list_projects.handle)
+
+import open
+register("/open", open.handle)

@@ -6,6 +6,7 @@ exportManager to export the selected item in the requested format (STEP or STL).
 """
 
 import os, tempfile, uuid
+from _types_ import BinaryResponse, HttpResponse
 
 def handle(path:str, request:dict, app) -> any:
     design = app.activeProduct
@@ -42,9 +43,11 @@ def handle(path:str, request:dict, app) -> any:
         raise Exception(f"Unsupported export format: {extension}")
 
     exportMgr.execute(exportOptions)
-    return exportOptions.filename
-
+    with open(exportOptions.filename, 'rb') as file:
+        content = file.read()
+    os.remove(exportOptions.filename)
+    return BinaryResponse(content)
 
 if __name__ == "__main__":
     from _client_ import *
-    test(__file__, { "path" : "/export/stl", "request": { "body": "ptfe_din_rail_clamp_x2" }, "app": ContextVariable("app") })
+    test(__file__, { "path" : "/export/stl", "request": { }, "app": None })

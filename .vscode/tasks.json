@@ -9,7 +9,7 @@
             "command": "pypy3",
             "args": [
                 "${file}"
-            ],
+            ],            
             "problemMatcher": []
         }
     ]

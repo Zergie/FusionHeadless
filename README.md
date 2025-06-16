@@ -88,8 +88,11 @@ result = sk.name
 
 
 ## 💡 Tips
-- `app` = `adsk.core.Application.get()` is automatically injected
-- `adsk` = Fusion 360 Python API module
+- automatically injects into the global context:
+  - `app` = `adsk.core.Application.get()`
+  - `adsk` = Fusion 360 Python API module
+  - `os` = Python's `os` module
+  - `sys` = Python's `sys` module
 - Use `"result = ..."` in `exec` mode to return a value
 
 

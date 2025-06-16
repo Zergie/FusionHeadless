@@ -1,8 +1,6 @@
-
 """
 Handles listing of components or bodies from the active Fusion 360 design based on the provided path.
 """
-
 def get_color(body) -> str:
     colors = [x for x in body.appearance.appearanceProperties if x.name == "Color"]
 
@@ -31,7 +29,6 @@ def body2json(body, **kwargs) -> dict:
     result.update(kwargs)
     return result
 
-
 def handle(path:str, app) -> any:
     design = app.activeProduct
     result = {}
@@ -57,12 +54,10 @@ def handle(path:str, app) -> any:
                     result[body.name]['count'] += 1
                 else:
                     result[body.name] = body2json(body, count=1)
-        else:
-            raise ConnectionError("501;Endpoint not supported")
 
     return [v for _, v in result.items()]
 
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { "path" : "/list/bodies", "app": None })
+    _client_.test(__file__, { "path" : "/list/bodies1", "app": None })

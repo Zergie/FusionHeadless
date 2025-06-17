@@ -29,6 +29,8 @@ Only use it on **trusted machines** and restrict access to `localhost`.
 2. Clone or download this repo into that folder:
    ```bash
    git clone https://github.com/Zergie/FusionHeadless.git
+   cd FusionHeadless
+   python -m pip install -r requirements.txt # for development only, e.g. send.py
    ```
 
 3. Launch Fusion 360 and go to:
@@ -45,6 +47,7 @@ Send a JSON payload to evaluate or execute Python code inside Fusion.
 
 #### 🧠 Parameters:
 - `code`: the Python code to run (as a string)
+- `depth`: optional, the maximum recursion depth for object serialization
 
 #### ✅ Example: `eval`
 ```http
@@ -63,7 +66,6 @@ Content-Type: application/json
 
 {
   "code": "app.activeDocument.name"
-  "ui_thread": true
 }
 ```
 
@@ -117,11 +119,26 @@ Make sure:
 
 ## 📚 Additional Endpoints
 
+### `GET /status`
+Returns the status of FusionHeadless.
+
+### `POST /exec/ui`
+Executes code on the Fusion 360 UI thread.
+
 ### `GET /list/bodies`
 Returns a list of all bodies of the active document.
 
 ### `GET /list/components`
 Returns a list of all components of the active document.
+
+### `GET /list/projects`
+Returns a list of all projects in the application.
+
+###  `GET /list/files`
+Returns a list of all files in the all projects. If `name` is specified, 
+
+#### 🧠 Parameters:
+- `GET /list/files?name=<name>`: Returns only files with that name.
 
 ### `POST /export/step` and `POST /export/stl`
 Exports the active document or component/body to a STEP file or STL file. Returns the file path.

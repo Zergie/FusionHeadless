@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import argparse
 import http.client
 import json
-import argparse
+import os
 from jsonpath_ng.ext import parse
 from urllib.parse import urlencode
 
@@ -130,12 +131,18 @@ def test(file_path, context = {}):
 def main():
     parser = argparse.ArgumentParser(description="Send HTTP requests to a server.")
     parser.add_argument('endpoint', type=str, help='The endpoint to send the request to.')
-    parser.add_argument('--get', "-g", action='store_true', help='Send a GET request.')
-    parser.add_argument('--post', "-p", action='store_true', help='Send a POST request with JSON data.')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--get', "-g", action='store_true', help='Send a GET request.')
+    group.add_argument('--post', "-p", action='store_true', help='Send a POST request with JSON data.')
     parser.add_argument('--data', "-d", type=str, help='JSON data to send with POST request.')
     parser.add_argument('--output', "-o", type=str, help='File path hint for error messages.')
     parser.add_argument('--xpath', "-x", type=str, help='XPath to extract data from the response.')
     args = parser.parse_args()
+
+    if args.get and args.data:
+        parser.error("Error: --data cannot be used with --get.")
+        return
 
     if args.get:
         response = get(args.endpoint)
@@ -154,7 +161,18 @@ def main():
         response = [match.value for match in matches]
 
     if args.output:
-        json.dump(response, open(args.output, 'w'), indent=2, ensure_ascii=False)
+        if os.path.exists(args.output):
+            old = json.loads(open(args.output, 'r').read())
+            if old != response:
+                doUpdate = True
+            else:
+                print("Responses are identical, output file not updated.")
+                doUpdate = False
+        else:
+            doUpdate = True
+        
+        if doUpdate:
+            json.dump(response, open(args.output, 'w'), indent=2, ensure_ascii=False)
     else:
         pprint(response)
 

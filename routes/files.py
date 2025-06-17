@@ -1,5 +1,5 @@
 """
-<< short description >>
+This route acts as a filter, returning all files with a specific name from the application's data.
 """
 
 def walk_folder(folder):
@@ -23,9 +23,10 @@ def walk(dataProjects):
         yield from walk_folder(project.rootFolder)
 
 def handle(query, app) -> any:
-    if 'name' not in query:
-        raise Exception("Query must contain 'name' key")
-    return [item for item in walk(app.data.dataProjects) if item['name'] == query['name']]
+    if 'name' in query:
+        return [item for item in walk(app.data.dataProjects) if item['name'] == query['name']]
+    else:
+        return [item for item in walk(app.data.dataProjects)]
 
 if __name__ == "__main__":
     import _client_

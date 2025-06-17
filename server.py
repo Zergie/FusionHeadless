@@ -28,6 +28,56 @@ def execute_code(code: str|dict, context: dict = None):
         exec(code.get("code", ""), context)
     return context.get("result", None)
 
+def sort_attrs(item):
+    order = ["id", "name", "description"]
+    if item in order:
+        return f"{order.index(item):02d}_{item}"
+    else:
+        return f"{len(order):02d}_{item}"
+
+def object2json(obj, max_depth, depth=0):
+    if type(obj).__name__ in ['method', 'function', 'NoneType']:
+        result = None
+    elif isinstance(obj, (int, float, str, bool)):
+        result = obj
+    elif obj is None:
+        result = None
+    elif isinstance(obj, (list, tuple)) and not hasattr(obj, '__iter__'):
+        result = [object2json(x, max_depth, depth+1) for x in obj] if depth < max_depth else []
+    elif isinstance(obj, dict):
+        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.items()} if depth < max_depth else {}
+    elif hasattr(obj, 'asArray') and callable(obj.asArray):
+        result = [object2json(v, max_depth, depth+1) for v in obj.asArray()] if depth < max_depth else []
+    elif hasattr(obj, 'asDict') and callable(obj.asDict):
+        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}
+    else:
+        result = {k: object2json(attribute2json(obj, k), max_depth, depth+1) for k in sorted(dir(obj), key=sort_attrs) if not k.startswith('_')}  if depth < max_depth else {}
+
+    if isinstance(result, (list, tuple)):
+        result = {
+            'items': [x for x in result if x is not None],
+            'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
+            # 'objectType': type(obj).__name__,
+            # 'depth': depth
+        }
+    elif isinstance(result, dict):
+        result.update({
+            'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
+            # 'objectType': type(obj).__name__,
+            #  'depth': depth
+        })
+        result = {k: v for k, v in result.items() if v is not None}
+    
+    return result
+
+def attribute2json(body, attr) -> dict:
+    if attr in ['this', 'objectType']: # ignore these attributes
+        return None
+    try:
+        return getattr(body, attr)
+    except:
+        return None
+
 class RequestHandler(BaseHTTPRequestHandler):
     def _do_ANY(self, request):
         parsed_url = urlparse(self.path)
@@ -39,11 +89,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             if path == "/eval":
                 result = eval(request.get("code", ""), context)
+                if "depth" in request:
+                    result = object2json(result, max_depth=int(request["depth"]))
             elif path == "/exec":
-                if request.get("ui_thread", False):
-                    adsk.core.Application.get().fireCustomEvent('FusionHeadless.ExecOnUiThread', request.get("code", ""))
-                else:
-                    result = execute_code(request, context)
+                result = execute_code(request, context)
+                if "depth" in request:
+                    result = object2json(result, max_depth=int(request["depth"]))
+            elif path == "/exec/ui":
+                adsk.core.Application.get().fireCustomEvent('FusionHeadless.ExecOnUiThread', request.get("code", ""))
             else:
                 handler = get_handler(path)
                 if handler:

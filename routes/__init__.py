@@ -20,5 +20,5 @@ register("/list/projects", list_projects.handle)
 import open
 register("/open", open.handle)
 
-import file
-register("/file", file.handle)
+import files
+register("/files", files.handle)

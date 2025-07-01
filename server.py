@@ -1,32 +1,32 @@
-from . import routes
-from .route_registry import get_handler
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import adsk.core
 import json
 import traceback
-import os, sys
+import importlib
 from urllib.parse import urlparse, parse_qs
+import os, sys
+import routes
+import route_registry
 
+app = None
+ui = None
 def get_context(additional={}):
+    global app, ui
+    if app is None:
+        app = adsk.core.Application.get()
+    if ui is None:
+        ui = app.userInterface
     context = {
-        "adsk": adsk,
-        "app": adsk.core.Application.get(),
-        "ui": adsk.core.Application.get().userInterface,
-        "os": os,
-        "sys": sys,
+        "adsk" : adsk,
+        "app"  : app,
+        "os"   : os,
+        "sys"  : sys,
+        "ui"   : ui,
     }
     context.update(additional)
     return context
-
-def execute_code(code: str|dict, context: dict = None):
-    if context is None:
-        context = get_context()
-    
-    if isinstance(code, str):
-        exec(code, context)
-    else:
-        exec(code.get("code", ""), context)
-    return context.get("result", None)
 
 def sort_attrs(item):
     order = ["id", "name", "description"]
@@ -78,48 +78,113 @@ def attribute2json(body, attr) -> dict:
     except:
         return None
 
+customEventArguments = {}
+class CustomEventArgument:
+    def __init__(self, path, query, context):
+        self.uuid = str(uuid.uuid4())
+        self.event = threading.Event()
+        self.path = path
+        self.query = query
+        self.context = context
+        self.result = None
+        self.http_error = None 
+
+    def __str__(self):
+        return f"CustomEventArgument(uuid={self.uuid})"
+
+    def __repr__(self):
+        return self.__str__()
+
+class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
+    def __init__(self):
+        super().__init__()
+    def notify(self, args):
+        global ui, customEventArguments
+        arg = None
+        try:
+            arg = customEventArguments.get(args.additionalInfo, None)
+            if not arg:
+                raise ValueError(f"Custom event argument with UUID {args.additionalInfo} not found.")
+            elif arg.path == "/eval" or arg.path == "/exec":
+                if arg.path == "/eval":
+                    arg.result = eval(arg.query.get("code", ""), arg.context)
+                elif arg.path == "/exec":
+                    exec(arg.query.get("code", ""), arg.context)
+                    arg.result = arg.context.get("result", None)
+
+                if "depth" in arg.query:
+                    arg.result = object2json(arg.result, max_depth=int(arg.query["depth"]))
+            elif arg.path == "/reload":
+                modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
+                my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
+                
+                arg.result = {}
+                for module in my_modules:
+                    if module == "server":
+                        continue
+                    try:
+                        importlib.reload(sys.modules[module])
+                        arg.result[module] = "Reloaded"
+                    except:
+                        del sys.modules[module]
+                        arg.result[module] = "Removed"
+
+            else:
+                handler = route_registry.get_handler(arg.path)
+                if handler:
+                    args = handler.__code__.co_varnames[:handler.__code__.co_argcount]
+                    kwargs = {k: v for k, v in arg.context.items() if k in args}
+                    arg.result = handler(**kwargs)
+                else:
+                    arg.http_error = (404, f"Route {arg.path} not defined")
+                
+            arg.event.set()  # Signal that the code execution is complete
+        except Exception as e:
+            if arg:
+                arg.result = None
+                arg.http_error = (500, traceback.format_exc())
+                arg.event.set()  # Signal that the code execution is complete
+            elif ui:
+                ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
+            adsk.autoTerminate(False)
+
 class RequestHandler(BaseHTTPRequestHandler):
     def _do_ANY(self, request):
+        global app, customEventArguments
         parsed_url = urlparse(self.path)
         path = parsed_url.path
-        query = parse_qs(parsed_url.query)
+        query = {k: v[0] if len(v) == 1 else v for k, v in parse_qs(parsed_url.query).items()}
+        query.update(request)  # Merge query parameters with request body
         context = get_context({ "path": path, "query": query, "request": request })
-        result = None
 
-        try:
-            if path == "/eval":
-                result = eval(request.get("code", ""), context)
-                if "depth" in request:
-                    result = object2json(result, max_depth=int(request["depth"]))
-            elif path == "/exec":
-                result = execute_code(request, context)
-                if "depth" in request:
-                    result = object2json(result, max_depth=int(request["depth"]))
-            elif path == "/exec/ui":
-                adsk.core.Application.get().fireCustomEvent('FusionHeadless.ExecOnUiThread', request.get("code", ""))
+        arg = CustomEventArgument(path, query, context)
+        customEventArguments[arg.uuid] = arg
+        app.fireCustomEvent('FusionHeadless.ExecOnUiThread', arg.uuid)
+        arg.event.wait()  # Wait for the event to be set by the custom event handler
+        del customEventArguments[arg.uuid]  # Clean up after we're done
+
+        if arg.http_error:
+            self.send_response(arg.http_error[0])
+            message = arg.http_error[1]
+            if isinstance(message, str):
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(message.encode())
             else:
-                handler = get_handler(path)
-                if handler:
-                    result = handler(**{k: v for k, v in context.items() if k in handler.__code__.co_varnames})
-                else:
-                    return self.send_error(404, f"Route {path} not defined")
-        
-            if hasattr(result, 'send') and callable(getattr(result, 'send')):
-                result.send(self)
-            else:
-                self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": "ok",
-                    "result": result
-                }).encode())
-
-        except Exception as e:
-            self.send_response(500)
-            self.send_header("Content-Type", "text/plain")
+                self.wfile.write(json.dumps(message).encode())
+            self.send_error(arg.http_error[0], arg.http_error[1])
+        elif hasattr(arg.result, 'send') and callable(getattr(arg.result, 'send')):
+            arg.result.send(self)
+        else:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(traceback.format_exc().encode())
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "result": arg.result
+            }).encode())
 
     def do_GET(self):
         return self._do_ANY({})
@@ -134,7 +199,17 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         return self._do_ANY(request)
 
+server:ThreadingHTTPServer = None
 def start_server(port=5000):
-    server = HTTPServer(("localhost", port), RequestHandler)
+    global server
+    server = ThreadingHTTPServer(("localhost", port), RequestHandler)
     print(f"[FusionHeadless] Listening on port {port}")
     server.serve_forever()
+
+def stop_server():
+    global server
+    if server:
+        print("[FusionHeadless] Stopping server...")
+        server.shutdown()
+        server.server_close()
+        print("[FusionHeadless] Server stopped.")

@@ -30,4 +30,4 @@ def handle(query, app) -> any:
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { 'query': {'name':'Latch Lock'}, 'app' : None})
+    _client_.test(__file__, { 'query': {'name':'Assembly'}, 'app' : None})

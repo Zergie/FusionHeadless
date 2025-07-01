@@ -1,63 +1,35 @@
 """
 Handles listing of components or bodies from the active Fusion 360 design based on the provided path.
 """
+from _utils_ import getAllBodies, body2dict, component2dict
 
-
-def get_color(body) -> str:
-    colors = [x for x in body.appearance.appearanceProperties if x.name == "Color"]
-
-    if not colors or len(colors) == 0:
-        return "00000000"
-    
-    if colors[0].value is None:
-        return "00000000"
-
-    return "%0.2X%0.2X%0.2XFF" % (colors[0].value.red, colors[0].value.green, colors[0].value.blue)
-
-def body2json(body) -> dict:
-    return {
-        'name': body.name,
-        'volume': body.physicalProperties.volume,
-        'mass': body.physicalProperties.mass,
-        'area': body.physicalProperties.area,
-        # 'physicalProperties' : object2json(body.physicalProperties),
-        'centerOfMass': [round(v, 2) for v in body.physicalProperties.centerOfMass.asArray()],
-        'color': get_color(body),
-        'material': body.material.name if body.material else None,
-        'boundingBox': {
-            'min': [round(v, 2) for v in body.boundingBox.minPoint.asArray()],
-            'max': [round(v, 2) for v in body.boundingBox.maxPoint.asArray()],
-        },
-    }
+def appendBody(result, body) -> None:
+    dict = body2dict(body, count=0)
+    if not dict['id'] in result:
+        result[dict['id']] = dict
+    result[dict['id']]['count'] += 1
 
 def handle(path:str, app) -> any:
     design = app.activeProduct
 
-    if path == "/list/components":
-        result = {}
-    elif path == "/list/bodies":
-        result = [body2json(x) for x in design.rootComponent.bRepBodies]
+    result = {}
+    if path == "/bodies":
+        for body in getAllBodies(design):
+            appendBody(result, body)
 
-    for occ in design.rootComponent.allOccurrences:
-        comp = occ.component
-        if path == "/list/components":
-            if comp.name in result:
-                result[comp.name]['count'] += 1
-            else:
-                result[comp.name] = {
-                    'name'  : comp.name, 
-                    'bodies': [body2json(x) for x in comp.bRepBodies], 
-                    'count' : 1
-                }
-        elif path == "/list/bodies":
-            result += [body2json(x) for x in comp.bRepBodies]
-
-    if isinstance(result, dict):
         return [v for _, v in result.items()]
-    else:
-        return result
 
+    elif path == "/components":
+        for component in [x.component for x in design.rootComponent.allOccurrences]:
+            json = component2dict(component, bodies=[body2dict(x) for x in component.bRepBodies], count=0)
+            if not json['id'] in result:
+                result[json['id']] = json
+            result[json['id']]['count'] += 1
+        
+        return [v for _, v in result.items() if len(v['bodies']) > 0]
+    
+    raise Exception(f"Unknown path: {path}. Supported paths are: /bodies, /components")
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { "path" : "/list/bodies", "app": None })
+    _client_.test(__file__, { "path" : "/bodies", "app": None }, output="C:\\GIT\\YAMMU\\obj\\bodies.json")

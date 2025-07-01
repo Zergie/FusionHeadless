@@ -125,20 +125,23 @@ Returns the status of FusionHeadless.
 ### `POST /exec/ui`
 Executes code on the Fusion 360 UI thread.
 
-### `GET /list/bodies`
+### `GET /bodies`
 Returns a list of all bodies of the active document.
 
-### `GET /list/components`
+### `GET /components`
 Returns a list of all components of the active document.
 
-### `GET /list/projects`
+### `GET /projects`
 Returns a list of all projects in the application.
 
-###  `GET /list/files`
-Returns a list of all files in the all projects. If `name` is specified, 
+###  `GET /files`
+Returns a of all files in the all projects. If `name` is specified, 
 
 #### 🧠 Parameters:
-- `GET /list/files?name=<name>`: Returns only files with that name.
+- `GET /files?name=<name>`: Returns only files with that name.
+
+### `GET /open?id=<id>`
+Opens a Fusion 360 document by its ID.
 
 ### `POST /export/step` and `POST /export/stl`
 Exports the active document or component/body to a STEP file or STL file. Returns the file path.

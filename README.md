@@ -117,35 +117,75 @@ Make sure:
 - You run it only on localhost
 - You don’t expose it via port forwarding or firewalls
 
-## 📚 Additional Endpoints
-
-### `GET /status`
-Returns the status of FusionHeadless.
-
-### `POST /exec/ui`
-Executes code on the Fusion 360 UI thread.
+## 📚 All Endpoints
 
 ### `GET /bodies`
-Returns a list of all bodies of the active document.
+Returns a list of all bodies in the active document.
 
 ### `GET /components`
-Returns a list of all components of the active document.
+Returns a list of all components in the active document.
 
-### `GET /projects`
-Returns a list of all projects in the application.
-
-###  `GET /files`
-Returns a of all files in the all projects. If `name` is specified, 
+### `POST /document`
+Returns metadata about the currently active document.
 
 #### 🧠 Parameters:
-- `GET /files?name=<name>`: Returns only files with that name.
+- `POST /document?open=<id>`: Opens a document by ID.
+- `POST /document?close=<saveChanges>`: Closes the active document, optionally saving changes.
 
-### `GET /open?id=<id>`
-Opens a Fusion 360 document by its ID.
+### `POST /eval`
+Evaluates a Python expression and returns the result.
 
-### `POST /export/step` and `POST /export/stl`
-Exports the active document or component/body to a STEP file or STL file. Returns the file path.
+#### 🧠 Parameters:
+- `code`: the Python code to evaluate (as a string)
+- `depth`: optional, the maximum recursion depth for object serialization
+
+### `POST /exec`
+Executes Python code in the Fusion 360 environment.
+
+#### 🧠 Parameters:
+- `code`: the Python code to execute (as a string)
+- `depth`: optional, the maximum recursion depth for object serialization
+
+
+### `POST /export/<format>`
+Exports the active document, component, or body to file. Returns the file path. Available formats are: 
+
+- `POST /export/step`
+- `POST /export/stl`
+- `POST /export/3mf`
+- `POST /export/obj`
 
 #### 🧠 Parameters:
 - `component`: optional, the name of the component to export (if not specified, exports the active document)
 - `body`: optional, the name of the body to export (if not specified, exports the entire component)
+
+### `GET /files`
+Returns a list of all files in all projects.
+
+#### 🧠 Parameters:
+- `GET /files?name=<name>`: Returns only files with that name.
+
+### `GET /projects`
+Returns a list of all projects in the application.
+
+### `POST /reload`
+Reloads the FusionHeadless add-in.
+
+### `GET /render`
+Renders the current view or document and returns the image.
+
+### `POST /restart`
+Restarts the FusionHeadless server.
+
+### `GET /routes`
+Returns a list of all available API routes.
+
+### `POST /select`
+Selects an entity in the Fusion 360 UI by ID or name.
+
+#### 🧠 Parameters:
+- `id`: the ID of the entity to select
+- `name`: the name of the entity to select
+
+### `GET /status`
+Returns the status of FusionHeadless.

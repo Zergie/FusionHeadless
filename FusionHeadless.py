@@ -1,36 +1,61 @@
-import adsk.core
+import adsk.core # type: ignore
+import importlib
 import os
 import sys
 import threading
 import traceback
-import importlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import server
 except:
     adsk.core.Application.get().userInterface.messageBox("Loading failed:\n" + traceback.format_exc())
-importlib.reload(server) # Ensure the latest version of server is loaded
 
 app = None
-ui = adsk.core.UserInterface.cast(None)
 handlers = []
-customEvent = None
-server_thread: threading.Thread = None
+server_thread: threading.Thread|None = None
+
+class RestartHandler(adsk.core.CustomEventHandler):
+    def __init__(self):
+        super().__init__()
+    def notify(self, args):
+        global server_thread
+        
+        try:
+            server.stop_server()
+        except Exception as e:
+            adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())
+        
+        try:
+            importlib.reload(server)
+        except Exception as e:
+            adsk.core.Application.get().userInterface.messageBox("Error reloading server:\n" + traceback.format_exc())
+
+        try:
+            server_thread = threading.Thread(target=server.start_server, daemon=True)
+            server_thread.start()
+        except Exception as e:
+            adsk.core.Application.get().userInterface.messageBox("Restart failed:\n" + traceback.format_exc())
+
+def register_event_handler(event_id:str, on_event):
+    global app, handlers
+    if not app:
+        raise RuntimeError("Application instance is not initialized.")
+    customEvent = app.registerCustomEvent(event_id)
+    customEvent.add(on_event)
+    handlers.append(on_event)
 
 def run(context):
-    global app, ui, customEvent, handlers, server_thread
+    global app, server_thread
     app = adsk.core.Application.get()
-    ui = app.userInterface
-    
-    customEvent = app.registerCustomEvent('FusionHeadless.ExecOnUiThread')
-    onThreadEvent = server.ExecOnUiThreadHandler()
-    customEvent.add(onThreadEvent)
-    handlers.append(onThreadEvent)
+
+    register_event_handler('FusionHeadless.ExecOnUiThread', server.ExecOnUiThreadHandler())
+    register_event_handler('FusionHeadless.Restart', RestartHandler())
 
     try:
-        server_thread = threading.Thread(target=server.start_server, daemon=True).start()
-    except:
+        server_thread = threading.Thread(target=server.start_server, daemon=True)
+        server_thread.start()
+    except Exception as e:
         adsk.core.Application.get().userInterface.messageBox("Startup failed:\n" + traceback.format_exc())
 
 def stop(context):
@@ -39,4 +64,4 @@ def stop(context):
         try:
             server.stop_server()
         except Exception as e:
-            adsk.core.Application.get().userInterface.messageBox(f"Error stopping server: {e}")
+            adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())

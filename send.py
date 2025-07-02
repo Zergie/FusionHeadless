@@ -15,8 +15,9 @@ headers = {'Content-Type': 'application/json'}
 suppress_errors = False
 
 class Colors:
-    RED = '\033[91m'
+    GREEN = '\033[92m'
     YELLOW = '\033[93m'
+    RED = '\033[91m'
     RESET = '\033[0m'
 
 class FileItem:
@@ -322,7 +323,7 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
         sys.stderr.write(f"{Colors.YELLOW}Warning: File {fileItem.path} was not assigned to any component.{Colors.RESET}\n")
         warnings += 1
 
-    sys.stderr.write(f"\nSummary: {len(data)} components processed, {Colors.YELLOW}{warnings} warnings{Colors.RESET}, {Colors.RED}{errors} errors{Colors.RESET}.\n")
+    sys.stderr.write(f"\nSummary: {Colors.GREEN}{len(data)} components processed{Colors.RESET}, {Colors.YELLOW}{warnings} warnings{Colors.RESET}, {Colors.RED}{errors} errors{Colors.RESET}.\n")
 
     return [x for x in data if len(x['bodies']) > 0]
 
@@ -335,7 +336,7 @@ def test(file_path, context = {}, output=None, timeout=60):
 
     def_handle = [i for i in code.splitlines() if re.match(r'def\s*handle\s*\(', i)][0]
     def_handle_params = [i.strip(' ,)') for i in re.findall(r'([^,()]+\s*[,)])', def_handle)]
-    for i in [i for i in def_handle_params if i in ('app', 'adsk', 'ui', 'os', 'sys')]:
+    for i in [i for i in def_handle_params if i in ('app', 'adsk', 'ui', 'os', 'sys', 'startup_time')]:
         # If the context variable is one of these, we assume it's already defined
         context[i] = ContextVariable(i)
 

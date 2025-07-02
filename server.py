@@ -1,19 +1,20 @@
-import threading
-import uuid
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import adsk.core
-import json
-import traceback
-import importlib
 from urllib.parse import urlparse, parse_qs
-import os, sys
+import adsk.core # type: ignore
+import json
+import os
 import routes
-import route_registry
+import sys
+import threading
+import traceback
+import uuid
 
+startup_time = datetime.now()
 app = None
 ui = None
 def get_context(additional={}):
-    global app, ui
+    global app, ui, startup_time
     if app is None:
         app = adsk.core.Application.get()
     if ui is None:
@@ -24,6 +25,7 @@ def get_context(additional={}):
         "os"   : os,
         "sys"  : sys,
         "ui"   : ui,
+        "startup_time": startup_time,
     }
     context.update(additional)
     return context
@@ -104,7 +106,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
         try:
             arg = customEventArguments.get(args.additionalInfo, None)
             if not arg:
-                raise ValueError(f"Custom event argument with UUID {args.additionalInfo} not found.")
+                raise ValueError(f"Custom event argument with UUID {args.additionalInfo} not found. UUIDS: {list(customEventArguments.keys())}")
             elif arg.path == "/eval" or arg.path == "/exec":
                 if arg.path == "/eval":
                     arg.result = eval(arg.query.get("code", ""), arg.context)
@@ -114,23 +116,10 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
 
                 if "depth" in arg.query:
                     arg.result = object2json(arg.result, max_depth=int(arg.query["depth"]))
-            elif arg.path == "/reload":
-                modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
-                my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
-                
-                arg.result = {}
-                for module in my_modules:
-                    if module == "server":
-                        continue
-                    try:
-                        importlib.reload(sys.modules[module])
-                        arg.result[module] = "Reloaded"
-                    except:
-                        del sys.modules[module]
-                        arg.result[module] = "Removed"
-
+            elif arg.path == "/routes":
+                arg.result = sorted(["/eval", "/exec", "/routes"] + [x for x in routes.routes.keys()])
             else:
-                handler = route_registry.get_handler(arg.path)
+                handler = routes.get_handler(arg.path)
                 if handler:
                     args = handler.__code__.co_varnames[:handler.__code__.co_argcount]
                     kwargs = {k: v for k, v in arg.context.items() if k in args}

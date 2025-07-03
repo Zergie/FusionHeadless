@@ -5,7 +5,9 @@ import sys
 import threading
 import traceback
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+base_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, base_dir)
+sys.path.insert(0, os.path.join(base_dir, "routes"))
 try:
     import server
 except:

@@ -1,13 +1,17 @@
 """
 Select an occurrence by ID or name.
 """
-def find_occurrence(id_or_name: str, design) -> any:
-    for occurrence in design.rootComponent.allOccurrences:
-        component = occurrence.component
-        if component.name == id_or_name:
-            return occurrence
-        if component.id == id_or_name:
-            return occurrence
+def find_occurrence(id_or_name: list[str]|str, design) -> any:
+    if isinstance(id_or_name, str):
+        id_or_name = [id_or_name]
+    
+    for item in id_or_name:
+        for occurrence in design.rootComponent.allOccurrences:
+            component = occurrence.component
+            if component.name == item:
+                return occurrence
+            if component.id == item:
+                return occurrence
     return None
 
 def handle(app, query:dict) -> any:
@@ -23,11 +27,20 @@ def handle(app, query:dict) -> any:
         raise Exception(f"Occurrence with id or name '{query.get('id', query.get('name'))}' not found.")
 
     occurrence.isIsolated = True
+    if not occurrence.isVisible:
+        for occ in design.rootComponent.allOccurrences:
+            occ.isLightBulbOn = False
+
+        occurrence.isLightBulbOn = True
+        occurrence.component.isLightBulbOn = True
+
+    if not occurrence.isVisible:
+        assembly_context = occurrence.assemblyContext
+        while assembly_context and not assembly_context.isVisible:
+            assembly_context.isLightBulbOn = True
+            assembly_context = assembly_context.assemblyContext
+
     occurrence.activate()
-    center = adsk.core.Point3D.create() # type: ignore
-    center.x = (occurrence.boundingBox.maxPoint.x + occurrence.boundingBox.minPoint.x) / 2
-    center.y = (occurrence.boundingBox.maxPoint.y + occurrence.boundingBox.minPoint.y) / 2
-    center.z = (occurrence.boundingBox.maxPoint.z + occurrence.boundingBox.minPoint.z) / 2
     
     viewport = app.activeViewport
     viewport.goHome()

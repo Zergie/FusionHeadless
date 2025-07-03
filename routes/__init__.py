@@ -1,7 +1,8 @@
 import importlib
 import importlib.util
-import sys
 import os
+import sys
+import types
 
 routes = {}
 def register(path:str, handler_func):
@@ -10,27 +11,29 @@ def register(path:str, handler_func):
 def get_handler(path:str):
     return routes.get(path, None)
 
-modules = {}
-def module(file:str):
-    if not file in modules:
-        base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{file}.py")
-        spec = importlib.util.spec_from_file_location(file, base_path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        modules[file] = module
-    return modules[file]
+class FusionHeadlessModules:
+    def __getattr__(self, file:str) -> types.ModuleType:
+        key = f"FusionHeadless.{file}"
+        if not key in sys.modules:
+            base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{file}.py")
+            spec = importlib.util.spec_from_file_location(file, base_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            sys.modules[key] = module
+        return sys.modules[key]
+FusionHeadless = FusionHeadlessModules()
 
-register("/status", module("status").handle)
-register("/components", module("list").handle)
-register("/bodies", module("list").handle)
-register("/export/step", module("export").handle)
-register("/export/stl", module("export").handle)
-register("/export/3mf", module("export").handle)
-register("/export/obj", module("export").handle)
-register("/projects", module("list_projects").handle)
-register("/document", module("document").handle)
-register("/files", module("files").handle)
-register("/render", module("render").handle)
-register("/reload", module("reload").handle)
-register("/restart", module("reload").handle)
-register("/select", module("select").handle)
+register("/status"     , FusionHeadless.status.handle)
+register("/components" , FusionHeadless.list.handle)
+register("/bodies"     , FusionHeadless.list.handle)
+register("/export/step", FusionHeadless.export.handle)
+register("/export/stl" , FusionHeadless.export.handle)
+register("/export/3mf" , FusionHeadless.export.handle)
+register("/export/obj" , FusionHeadless.export.handle)
+register("/projects"   , FusionHeadless.list_projects.handle)
+register("/document"   , FusionHeadless.document.handle)
+register("/files"      , FusionHeadless.files.handle)
+register("/render"     , FusionHeadless.render.handle)
+register("/reload"     , FusionHeadless.reload.handle)
+register("/restart"    , FusionHeadless.reload.handle)
+register("/select"     , FusionHeadless.select.handle)

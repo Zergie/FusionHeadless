@@ -1,29 +1,42 @@
 import argparse
-import base64
 import sys
 import os
 import tempfile
 import winreg
+import send
+from urllib.parse import urlparse, parse_qs
+
+scheme = "fh"
 
 class Log:
     def __init__(self):
         self.log_file = os.path.join(tempfile.gettempdir(), os.path.basename(__file__) + ".txt")
 
-    def log(self, message):
+    def _log(self, message, to_console=True):
         with open(self.log_file, "a") as f:
             f.write(message + "\n")
-        print(message)
+        if to_console:
+            print(message)
 
-    def error(self, message):
+    def error(self, message, to_console=True):
         if isinstance(message, Exception):
             message = f"{type(message).__name__}: {message}"
-        self.log(f"ERROR: {message}")
+        self._log(f"ERROR: {message}", to_console=to_console)
 
-    def info(self, message):
-        self.log(f"INFO: {message}")
+    def info(self, message, to_console=True):
+        self._log(f"INFO: {message}", to_console=to_console)
 
-    def debug(self, message):
-        self.log(f"DEBUG: {message}")
+    def debug(self, message, to_console=True):
+        self._log(f"DEBUG: {message}", to_console=to_console)
+log = Log()
+
+def pprint_hook(event, args):
+    send.pprint_hook(event, args)
+
+    if event == "http.client.send":
+        conn, buffer = args
+        http_str = buffer.decode('utf-8')
+        log.info(http_str, to_console=False)
 
 def main():
     parser = argparse.ArgumentParser(description="Installs Url Handler and handles URLs.")
@@ -33,12 +46,10 @@ def main():
     group.add_argument("--url", type=str, help="The URL to handle.")
 
     args = parser.parse_args()
-    log = Log()
 
     if args.install:
         log.info("Installing URL handler...")
         
-        scheme = "fh"
         command = f'"{sys.executable}" "{os.path.abspath(__file__)}" --url "%1"'
         log.info(f"Registering URL scheme: {scheme} with command: {command}")
 
@@ -55,7 +66,6 @@ def main():
     elif args.uninstall:
         log.info("Uninstalling URL handler...")
         
-        scheme = "fh"
         key_path = f"SOFTWARE\\Classes\\{scheme}"
         try:
             winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
@@ -67,19 +77,27 @@ def main():
             sys.exit(1)
 
     elif args.url:
-        if not args.url.startswith("fh://"):
-            log.error(f"Invalid URL format: {args.url}. Expected format: fh://<command>")
-            sys.exit(1)
-
-        log.info(f"Handled URL: {args.url}")
         try:
-            value = f"{int.from_bytes(base64.b85decode(args.url[5:-1]), byteorder='big'):x}"
-            log.info(f"Value: {value}")
+            url = args.url
+            log.info(f"Handling URL: {url}")
 
-            s = f"{value[:8]}-{value[8:12]}-{value[12:16]}-{value[16:20]}-{value[20:]}"
-            log.info(f"Formatted: {s}")
+            if not url.startswith(f"{scheme}://"):
+                raise ValueError(f"URL must start with '{scheme}://'")
+
+            parsed = urlparse(url)
+            log.debug(f"Parsed URL: {parsed}")
+            query = parse_qs(parsed.query)
+            log.debug(f"Query parameters: {query}")
+            
+            sys.addaudithook(pprint_hook)
+            result = send.get(parsed.path, parsed.query)
+            log.info(result)
+
         except Exception as e:
             log.error(e)
+            input("An error occurred while handling the URL. Press Enter to exit.")
+            sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

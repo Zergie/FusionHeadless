@@ -7,18 +7,34 @@ import os
 import sys
 import re
 import jmespath
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 host = 'localhost'
 port = 5000
 headers = {'Content-Type': 'application/json'}
 suppress_errors = False
 
-class Colors:
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
+class Term:
     RESET = '\033[0m'
+    
+    @classmethod
+    def url(cls, text, route, **kwargs):
+        url = f"fh://{host}:{port}{route}"
+        if kwargs:
+            url += "?" + urlencode(kwargs)
+        return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+    @classmethod
+    def green(cls, text):
+        return f"\033[92m{text}{cls.RESET}"
+
+    @classmethod
+    def yellow(cls, text):
+        return f"\033[93m{text}{cls.RESET}" 
+
+    @classmethod
+    def red(cls, text):
+        return f"\033[91m{text}{cls.RESET}"
 
 class FileItem:
     def __init__(self, root, name):
@@ -191,11 +207,14 @@ def pprint(obj):
     else:
         print(obj)
 
-def get(endpoint, params=None, timeout=60):
+def get(endpoint, params:dict=None, timeout=60):
     path = endpoint if endpoint.startswith('/') else f"/{endpoint}"
     if params:
-        query = urlencode(params)
-        path = f"{endpoint}?{query}"
+        if isinstance(params, str):
+            query = params
+        else:
+            query = urlencode(params)
+        path += f"?{query}"
 
     conn = http.client.HTTPConnection(host, port, timeout=timeout)
     conn.request('GET', path, headers=headers)
@@ -211,9 +230,14 @@ def get(endpoint, params=None, timeout=60):
     else:
         return resp_data
 
-def post(endpoint, data=None, file_path_hint=None, timeout=60):
+def post(endpoint, data:dict=None, file_path_hint=None, timeout=60):
     path = endpoint if endpoint.startswith('/') else f"/{endpoint}"
-    body = json.dumps(data) if data is not None else None
+    if not data:
+        body = None
+    elif isinstance(data, str):
+        body = data
+    else:
+        body = json.dumps(data)
 
     conn = http.client.HTTPConnection(host, port, timeout=timeout)
     conn.request('POST', path, body=body, headers=headers)
@@ -289,11 +313,14 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
             
             name = get_name(component['name'], body['name'], component['count'], body['color'])
             matches = [fileItem for fileItem in fileItems if fileItem == name]
-
             body['suggested_name'] = name
-            
+
+            if len(matches) == 0 and "/" in name:
+                name = name.split("/")[-1]
+                matches = [fileItem for fileItem in fileItems if fileItem == name]
+
             if len(matches) == 0:
-                sys.stderr.write(f"{Colors.YELLOW}Warning: No matching file found for {component['name']} - {body['name']} -> {name}{Colors.RESET}\n")
+                sys.stderr.write(Term.yellow(f"Warning: No matching file found for " + Term.url(component['name'], "/select", id=component['id']) + f" - {body['name']} -> {name}\n"))
                 warnings += 1
                 fileItem = FileItem(os.path.join(folder, "_TODO"), name)
                 fileItems.append(fileItem)
@@ -308,11 +335,11 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
                     fileItem.assigned.append(body["id"])
                     body['path'] = fileItem.path
                     if len(fileItem.assigned) > 1:
-                        sys.stderr.write(f"{Colors.YELLOW}Warning: File {fileItem.path} is already assigned multiple times ({fileItem.assigned} times).{Colors.RESET}\n")
+                        sys.stderr.write(Term.yellow(f"Warning: File {fileItem.path} is already assigned multiple times ({fileItem.assigned} times).\n"))
                         warnings += 1
                     
             else:
-                sys.stderr.write(f"{Colors.RED}Error: Multiple matching files found for {component['name']}/{body['name']} -> {name}:{Colors.RESET}\n")
+                sys.stderr.write(Term.red(f"Error: Multiple matching files found for " + Term.url(component['name'], "/select", id=component['id']) + f" - {body['name']} -> {name}:\n"))
                 for match in matches:
                     sys.stderr.write(f"  - {match}")
                 errors += 1
@@ -320,19 +347,26 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
             component['bodies'] = [b for b in component['bodies'] if 'id' in b]
 
     for fileItem in [x for x in fileItems if len(x.assigned) == 0]:
-        sys.stderr.write(f"{Colors.YELLOW}Warning: File {fileItem.path} was not assigned to any component.{Colors.RESET}\n")
+        sys.stderr.write(Term.yellow(f"Warning: File {fileItem.path} was not assigned to any component.\n"))
         warnings += 1
 
-    sys.stderr.write(f"\nSummary: {Colors.GREEN}{len(data)} components processed{Colors.RESET}, {Colors.YELLOW}{warnings} warnings{Colors.RESET}, {Colors.RED}{errors} errors{Colors.RESET}.\n")
+    sys.stderr.write("\nSummary: " + Term.green(f"{len(data)} components processed") + ", " + Term.yellow(f"{warnings} warnings") + ", " + Term.red(f"{errors} errors") + ".\n")
 
     return [x for x in data if len(x['bodies']) > 0]
 
-def test(file_path, context = {}, output=None, timeout=60):
+def test(file_path, query = {}, output=None, timeout=60):
     global suppress_errors
     suppress_errors = True
 
     with open(file_path, 'r') as file:
         code = file.read()
+
+    context = {}
+    if isinstance(query, dict):
+        context["query"] = query
+    elif isinstance(query, str):
+        parsed = urlparse(query)
+        context["query"] = parse_qs(parsed.query)
 
     def_handle = [i for i in code.splitlines() if re.match(r'def\s*handle\s*\(', i)][0]
     def_handle_params = [i.strip(' ,)') for i in re.findall(r'([^,()]+\s*[,)])', def_handle)]

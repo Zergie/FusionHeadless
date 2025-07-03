@@ -19,10 +19,14 @@ class Term:
     
     @classmethod
     def url(cls, text, route, **kwargs):
-        url = f"fh://{host}:{port}{route}"
+        url = f"FusionHeadless://{host}:{port}{route}"
         if kwargs:
             url += "?" + urlencode(kwargs)
         return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+    @classmethod
+    def red(cls, text):
+        return f"\033[91m{text}{cls.RESET}"
 
     @classmethod
     def green(cls, text):
@@ -31,10 +35,6 @@ class Term:
     @classmethod
     def yellow(cls, text):
         return f"\033[93m{text}{cls.RESET}" 
-
-    @classmethod
-    def red(cls, text):
-        return f"\033[91m{text}{cls.RESET}"
 
 class FileItem:
     def __init__(self, root, name):
@@ -320,6 +320,11 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
                 matches = [fileItem for fileItem in fileItems if fileItem == name]
 
             if len(matches) == 0:
+                name =  get_name(body['name'], body['name'], component['count'], body['color'])
+                matches = [fileItem for fileItem in fileItems if fileItem == name]
+
+
+            if len(matches) == 0:
                 sys.stderr.write(Term.yellow(f"Warning: No matching file found for " + Term.url(component['name'], "/select", id=component['id']) + f" - {body['name']} -> {name}\n"))
                 warnings += 1
                 fileItem = FileItem(os.path.join(folder, "_TODO"), name)
@@ -332,11 +337,8 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
                     for key in list(body.keys()):
                         del body[key]
                 else:
-                    fileItem.assigned.append(body["id"])
+                    fileItem.assigned.append(body["name"])
                     body['path'] = fileItem.path
-                    if len(fileItem.assigned) > 1:
-                        sys.stderr.write(Term.yellow(f"Warning: File {fileItem.path} is already assigned multiple times ({fileItem.assigned} times).\n"))
-                        warnings += 1
                     
             else:
                 sys.stderr.write(Term.red(f"Error: Multiple matching files found for " + Term.url(component['name'], "/select", id=component['id']) + f" - {body['name']} -> {name}:\n"))
@@ -346,11 +348,17 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
 
             component['bodies'] = [b for b in component['bodies'] if 'id' in b]
 
+    for fileItem in [x for x in fileItems if len(x.assigned) > 1]:
+        # assigned = ", ".join([Term.url(x, "/select", id=x) for x in fileItem.assigned])
+        assigned = ", ".join(fileItem.assigned)
+        sys.stderr.write(Term.yellow(f"Warning: File {fileItem.path} is already assigned multiple times: {assigned}\n"))
+        warnings += 1
+
     for fileItem in [x for x in fileItems if len(x.assigned) == 0]:
         sys.stderr.write(Term.yellow(f"Warning: File {fileItem.path} was not assigned to any component.\n"))
         warnings += 1
 
-    sys.stderr.write("\nSummary: " + Term.green(f"{len(data)} components processed") + ", " + Term.yellow(f"{warnings} warnings") + ", " + Term.red(f"{errors} errors") + ".\n")
+    sys.stderr.write("\nSummary: " + Term.green(f"{len(data)} processed") + ", " + Term.yellow(f"{warnings} warnings") + ", " + Term.red(f"{errors} errors") + ".\n")
 
     return [x for x in data if len(x['bodies']) > 0]
 

@@ -6,7 +6,8 @@ import winreg
 import send
 from urllib.parse import urlparse, parse_qs
 
-scheme = "fh"
+scheme = "FusionHeadless"
+key_path = f"SOFTWARE\\Classes\\{scheme}"
 
 class Log:
     def __init__(self):
@@ -45,15 +46,18 @@ def main():
     group.add_argument("--uninstall", action="store_true", help="Uninstall the URL handler.")
     group.add_argument("--url", type=str, help="The URL to handle.")
 
-    args = parser.parse_args()
+    args = parser.parse_args()  # Change this to test different modes
 
     if args.install:
         log.info("Installing URL handler...")
         
-        command = f'"{sys.executable}" "{os.path.abspath(__file__)}" --url "%1"'
+        pythonw_exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if os.path.exists(pythonw_exe):
+            command = f'"{pythonw_exe}" "{os.path.abspath(__file__)}" --url "%1"'
+        else:
+            command = f'"{sys.executable}" "{os.path.abspath(__file__)}" --url "%1"'
         log.info(f"Registering URL scheme: {scheme} with command: {command}")
 
-        key_path = f"SOFTWARE\\Classes\\{scheme}"
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
             winreg.SetValueEx(key, None, 0, winreg.REG_SZ, f"{scheme} Protocol")
             winreg.SetValueEx(key, "URL Protocol", 0, winreg.REG_SZ, "")
@@ -66,9 +70,11 @@ def main():
     elif args.uninstall:
         log.info("Uninstalling URL handler...")
         
-        key_path = f"SOFTWARE\\Classes\\{scheme}"
         try:
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\shell\\open\\command")
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\shell\\open")
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"{key_path}\\shell")
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, f"{key_path}")
             log.info("URL handler uninstalled successfully.")
         except FileNotFoundError:
             log.error(f"URL handler for scheme '{scheme}' not found.")
@@ -81,7 +87,7 @@ def main():
             url = args.url
             log.info(f"Handling URL: {url}")
 
-            if not url.startswith(f"{scheme}://"):
+            if not url.lower().startswith(f"{scheme.lower()}://"):
                 raise ValueError(f"URL must start with '{scheme}://'")
 
             parsed = urlparse(url)

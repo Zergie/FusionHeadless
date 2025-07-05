@@ -34,7 +34,11 @@ class Term:
 
     @classmethod
     def yellow(cls, text):
-        return f"\033[93m{text}{cls.RESET}" 
+        return f"\033[93m{text}{cls.RESET}"
+    
+    @classmethod
+    def blue(cls, text):
+        return f"\033[94m{text}{cls.RESET}"
 
 class FileItem:
     def __init__(self, root, name):
@@ -323,11 +327,11 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
                 name =  get_name(body['name'], body['name'], component['count'], body['color'])
                 matches = [fileItem for fileItem in fileItems if fileItem == name]
 
-
             if len(matches) == 0:
                 sys.stderr.write(Term.yellow(f"Warning: No matching file found for " + Term.url(component['name'], "/select", id=component['id']) + f" - {body['name']} -> {name}\n"))
                 warnings += 1
-                fileItem = FileItem(os.path.join(folder, "_TODO"), name)
+                name = get_name(component['name'], body['name'], component['count'], body['color'])
+                fileItem = FileItem(folder, name)
                 fileItems.append(fileItem)
                 matches = [fileItem]
             
@@ -337,7 +341,7 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
                     for key in list(body.keys()):
                         del body[key]
                 else:
-                    fileItem.assigned.append(body["name"])
+                    fileItem.assigned.append(component)
                     body['path'] = fileItem.path
                     
             else:
@@ -349,8 +353,7 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
             component['bodies'] = [b for b in component['bodies'] if 'id' in b]
 
     for fileItem in [x for x in fileItems if len(x.assigned) > 1]:
-        # assigned = ", ".join([Term.url(x, "/select", id=x) for x in fileItem.assigned])
-        assigned = ", ".join(fileItem.assigned)
+        assigned = ", ".join([Term.url(x["name"], "/select", id=x["id"]) for x in fileItem.assigned])
         sys.stderr.write(Term.yellow(f"Warning: File {fileItem.path} is already assigned multiple times: {assigned}\n"))
         warnings += 1
 

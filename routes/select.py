@@ -14,6 +14,17 @@ def find_occurrence(id_or_name: list[str]|str, design) -> any:
                 return occurrence
     return None
 
+def get_assembly_contexts(occurrence) -> list[any]:
+    assembly_contexts = []
+    if occurrence.assemblyContext:
+        assembly_contexts.append(occurrence.assemblyContext)
+        occ = occurrence.assemblyContext
+        while occ.assemblyContext:
+            assembly_contexts.append(occ.assemblyContext)
+            occ = occ.assemblyContext
+        assembly_contexts.reverse()
+    return assembly_contexts
+
 def handle(app, query:dict) -> any:
     design = app.activeProduct
     
@@ -26,21 +37,37 @@ def handle(app, query:dict) -> any:
     if not occurrence:
         raise Exception(f"Occurrence with id or name '{query.get('id', query.get('name'))}' not found.")
 
-    occurrence.isIsolated = True
-    if not occurrence.isVisible:
-        for occ in design.rootComponent.allOccurrences:
-            occ.isLightBulbOn = False
-
-        occurrence.isLightBulbOn = True
-        occurrence.component.isLightBulbOn = True
-
-    if not occurrence.isVisible:
-        assembly_context = occurrence.assemblyContext
-        while assembly_context and not assembly_context.isVisible:
+    if occurrence.assemblyContext:
+        assembly_contexts = get_assembly_contexts(occurrence)
+        for assembly_context in assembly_contexts:
             assembly_context.isLightBulbOn = True
-            assembly_context = assembly_context.assemblyContext
+            assembly_context.isIsolated = True
 
-    occurrence.activate()
+        for assembly_context in assembly_contexts:
+            for occ in assembly_context.childOccurrences:
+                if not occ.isVisible:
+                    pass
+                elif occ.component.id == occurrence.component.id:
+                    pass
+                elif occ.component.id in [x.component.id for x in assembly_contexts]:
+                    pass
+                else:
+                    occ.isLightBulbOn = False
+        
+    else:
+        occurrence.isIsolated = True
+        if not occurrence.isVisible:
+            for occ in design.rootComponent.allOccurrences:
+                occ.isLightBulbOn = False
+
+            occurrence.isLightBulbOn = True
+            occurrence.component.isLightBulbOn = True
+
+        if not occurrence.isVisible:
+            assembly_context = occurrence.assemblyContext
+            while assembly_context and not assembly_context.isVisible:
+                assembly_context.isLightBulbOn = True
+                assembly_context = assembly_context.assemblyContext
     
     viewport = app.activeViewport
     viewport.goHome()
@@ -69,4 +96,4 @@ def handle(app, query:dict) -> any:
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { "query" : { "name": "Top Panel", "focus": False }})
+    _client_.test(__file__, { "name": "Moving", "focus": False })

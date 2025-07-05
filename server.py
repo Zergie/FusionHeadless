@@ -106,7 +106,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
         try:
             arg = customEventArguments.get(args.additionalInfo, None)
             if not arg:
-                raise ValueError(f"Custom event argument with UUID {args.additionalInfo} not found. UUIDS: {list(customEventArguments.keys())}")
+                return  # If the argument is not found, do nothing
             elif arg.path == "/eval" or arg.path == "/exec":
                 if arg.path == "/eval":
                     arg.result = eval(arg.query.get("code", ""), arg.context)

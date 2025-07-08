@@ -2,9 +2,12 @@ import argparse
 import sys
 import os
 import tempfile
+import traceback
 import winreg
-import send
 from urllib.parse import urlparse, parse_qs
+import cli
+from send import host, port
+import cli.my_printer as printer
 
 scheme = "FusionHeadless"
 key_path = f"SOFTWARE\\Classes\\{scheme}"
@@ -22,7 +25,7 @@ class Log:
     def error(self, message, to_console=True):
         if isinstance(message, Exception):
             message = f"{type(message).__name__}: {message}"
-        self._log(f"ERROR: {message}", to_console=to_console)
+        self._log(f"ERROR: {message}\nTraceback:{traceback.format_exc()}", to_console=to_console)
 
     def info(self, message, to_console=True):
         self._log(f"INFO: {message}", to_console=to_console)
@@ -32,7 +35,7 @@ class Log:
 log = Log()
 
 def pprint_hook(event, args):
-    send.pprint_hook(event, args)
+    printer.pprint_hook(event, args)
 
     if event == "http.client.send":
         conn, buffer = args
@@ -46,7 +49,7 @@ def main():
     group.add_argument("--uninstall", action="store_true", help="Uninstall the URL handler.")
     group.add_argument("--url", type=str, help="The URL to handle.")
 
-    args = parser.parse_args()  # Change this to test different modes
+    args = parser.parse_args()
 
     if args.install:
         log.info("Installing URL handler...")
@@ -94,14 +97,14 @@ def main():
             log.debug(f"Parsed URL: {parsed}")
             query = parse_qs(parsed.query)
             log.debug(f"Query parameters: {query}")
-            
+
+            cli.initialize(parsed.hostname, parsed.port)
             sys.addaudithook(pprint_hook)
-            result = send.get(parsed.path, parsed.query)
+            result = cli.methods.get(parsed.path, parsed.query)
             log.info(result)
 
         except Exception as e:
             log.error(e)
-            input("An error occurred while handling the URL. Press Enter to exit.")
             sys.exit(1)
 
 

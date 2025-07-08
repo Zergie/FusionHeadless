@@ -31,7 +31,16 @@ def all_bodies(design) -> any:
         for body in occ.bRepBodies:
             yield body
 
-def setVisibility(design, filter:str, value:bool) -> None:
+class Visibility:
+    HIDE = 0
+    SHOW = 1
+    ISOLATE = 2
+
+def log(message:str, mode:str = 'a') -> None:
+    with open("C:\\GIT\\YAMMU\\FusionAddons\\FusionHeadless\\routes\\render.py.log", mode) as log_file:
+        log_file.write(f"{message}\n")
+
+def setVisibility(design, filter:str, value:int) -> None:
     if filter == "all":
         for _ in range(2):
             for body in all_bodies(design):
@@ -46,10 +55,24 @@ def setVisibility(design, filter:str, value:bool) -> None:
                     name = match.group(1) or match.group(3)
                     version = match.group(2) or None
                     occurrence = match.group(4)
-
                     if name == filter:
-                        occ.isLightBulbOn = value
+                        if value == Visibility.ISOLATE:
+                            occ.isIsolated = True
 
+                            stack = [occ]
+                            while stack:
+                                item = stack.pop()
+                                if hasattr(item, 'childOccurrences'):
+                                    for x in item.childOccurrences:
+                                        stack.append(x)
+                                if not item.isVisible:
+                                    item.isLightBulbOn = True
+
+                        elif value == Visibility.SHOW:
+                            occ.isLightBulbOn = True
+                        elif value == Visibility.HIDE:
+                            occ.isLightBulbOn = False
+    
 def handle(query:dict, app, ui, adsk) -> any:
     path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}.png")
     if os.path.exists(path):
@@ -87,19 +110,20 @@ def handle(query:dict, app, ui, adsk) -> any:
         else:
             app.activeDocument.design.namedViews.itemByName(query['view']).apply()
 
-    if "show" in query:
-        if isinstance(query["show"], str):
-            setVisibility(design, query["show"], True)
-        elif isinstance(query["show"], list):
-            for item in query["show"]:
-                setVisibility(design, item, True)
-
-    if "hide" in query:
-        if isinstance(query["hide"], str):
-            setVisibility(design, query["hide"], False)
-        elif isinstance(query["hide"], list):
-            for item in query["hide"]:
-                setVisibility(design, item, False)
+    
+    lookup = {
+        'show': Visibility.SHOW,
+        'hide': Visibility.HIDE,
+        'isolate': Visibility.ISOLATE
+    }
+    for key in query.keys():
+        if key in lookup:
+            value = lookup[key]
+            if isinstance(query[key], str):
+                setVisibility(design, query[key], value)
+            elif isinstance(query[key], list):
+                for item in query[key]:
+                    setVisibility(design, item, value)
 
     if 'focalLength' in query:
         old['camera'] = setControlDefinition('ViewCameraCommand', 1, adsk, ui)
@@ -180,4 +204,5 @@ def handle(query:dict, app, ui, adsk) -> any:
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { "query" : {"view": "home", "focalLength": 200, "exposure": 8.2, "quality": "25", "width": 400, "height": 400}}, output=f"C:\\GIT\\YAMMU\\Images\\render_cw2.png", timeout=180)
+    # _client_.test(__file__, {"view": "MotionStudy_Latch", "isolate": "Direct Drive x4", "hide": "Filament Spools", "focalLength": 200, "quality": "ShadedWithVisibleEdgesOnly", "width": 400, "height": 400}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)
+    _client_.test(__file__, {"view": "MotionStudy_Latch", "isolate": "Direct Drive x4", "focalLength": 200, "quality": "ShadedWithVisibleEdgesOnly", "width": 400, "height": 400}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)

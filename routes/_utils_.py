@@ -79,8 +79,6 @@ def component2dict(comp, **kwargs) -> dict:
     result.update(kwargs)
     return result
 
-
-
 def setControlDefinition(item:str, value:bool|int|list|None, adsk, ui) -> list|None:
     if value is None:
         return None

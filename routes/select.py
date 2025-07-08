@@ -25,7 +25,7 @@ def get_assembly_contexts(occurrence) -> list[any]:
         assembly_contexts.reverse()
     return assembly_contexts
 
-def handle(app, query:dict) -> any:
+def handle(app, ui, query:dict) -> any:
     design = app.activeProduct
     
     occurrence = None
@@ -69,6 +69,11 @@ def handle(app, query:dict) -> any:
                 assembly_context.isLightBulbOn = True
                 assembly_context = assembly_context.assemblyContext
     
+    ui.activeSelections.clear()
+    ui.activeSelections.add(occurrence)
+    ui.commandDefinitions.itemById("FindInBrowser").execute()
+    ui.activeSelections.clear()
+
     viewport = app.activeViewport
     viewport.goHome()
     viewport.fit()
@@ -96,4 +101,4 @@ def handle(app, query:dict) -> any:
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { "name": "Moving", "focus": False })
+    _client_.test(__file__, { "name": "Outer Hinge (1)", "focus": False })

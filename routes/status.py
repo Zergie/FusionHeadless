@@ -22,6 +22,7 @@ def handle(app, startup_time) -> any:
         "uptime": get_uptime(startup_time),
         "version": f"Autodesk Fusion v{app.version}",
         "python": sys.version,
+        "paths" : {k: getattr(app.applicationFolders, k) for k in dir(app.applicationFolders) if not k.startswith('_') and 'path' in k.lower()},
     }
 
 if __name__ == "__main__":

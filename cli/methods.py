@@ -20,7 +20,7 @@ def get(endpoint, params:dict=None, timeout=60):
         if isinstance(params, str):
             query = params
         else:
-            query = urlencode(params)
+            query = urlencode(params, True)
         path += f"?{query}"
 
     conn = http.client.HTTPConnection(host, port, timeout=timeout)

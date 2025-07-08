@@ -29,6 +29,15 @@ class BinaryResponse(HttpResponse):
     def send_content(self, requestHandler: BaseHTTPRequestHandler):
         requestHandler.wfile.write(self.content)
 
+class PngResponse(HttpResponse):
+    def __init__(self, data: bytes):
+        super().__init__(200)
+        self.headers["Content-Type"] = "image/png"
+        self.content = data
+    
+    def send_content(self, requestHandler: BaseHTTPRequestHandler):
+        requestHandler.wfile.write(self.content)
+
 def getAllBodies(design):
     if not hasattr(design, "rootComponent"):
         raise Exception("Design does not have a rootComponent.")

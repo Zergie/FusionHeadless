@@ -10,7 +10,7 @@ Args:
                   'isBackgroundTransparent', 'isAntiAliased', and 'view'.
     app: The Fusion 360 application object.
 Returns:
-    BinaryResponse: The rendered image as a binary response.
+    PngResponse: The rendered image as a PNG response.
 Raises:
     Exception: If rendering does not complete within the specified timeout.
 """
@@ -21,7 +21,7 @@ import os
 import re
 import tempfile
 import uuid
-from _utils_ import BinaryResponse, setControlDefinition
+from _utils_ import PngResponse, setControlDefinition
 
 def all_bodies(design) -> any:
     for body in design.rootComponent.bRepBodies:
@@ -44,9 +44,9 @@ def setVisibility(design, filter:str, value:int) -> None:
     if filter == "all":
         for _ in range(2):
             for body in all_bodies(design):
-                body.isLightBulbOn = value
+                body.isLightBulbOn = True if value == Visibility.SHOW else False
             for occ in design.rootComponent.allOccurrences:
-                occ.isLightBulbOn = value
+                occ.isLightBulbOn = True if value == Visibility.SHOW else False
     else:
         for _ in range(2):
             for occ in design.rootComponent.allOccurrences:
@@ -55,6 +55,7 @@ def setVisibility(design, filter:str, value:int) -> None:
                     name = match.group(1) or match.group(3)
                     version = match.group(2) or None
                     occurrence = match.group(4)
+
                     if name == filter:
                         if value == Visibility.ISOLATE:
                             occ.isIsolated = True
@@ -72,6 +73,16 @@ def setVisibility(design, filter:str, value:int) -> None:
                             occ.isLightBulbOn = True
                         elif value == Visibility.HIDE:
                             occ.isLightBulbOn = False
+                    else:
+                        for body in occ.bRepBodies:
+                            if body.name == filter:
+                                if value == Visibility.ISOLATE:
+                                    occ.isIsolated = True
+                                    body.isLightBulbOn = True
+                                elif value == Visibility.SHOW:
+                                    body.isLightBulbOn = True
+                                elif value == Visibility.HIDE:
+                                    body.isLightBulbOn = False
     
 def handle(query:dict, app, ui, adsk) -> any:
     path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}.png")
@@ -103,6 +114,17 @@ def handle(query:dict, app, ui, adsk) -> any:
     if quality is not None and not (25 <= quality <= 100):
         raise ValueError("Quality must be between 25 and 100, or a valid visual style must be specified.")
     
+    if 'focalLength' in query:
+        old['camera'] = setControlDefinition('ViewCameraCommand', 1, adsk, ui)
+        camera = viewport.camera
+        camera.cameraType = adsk.core.CameraTypes.PerspectiveCameraType
+        camera.isSmoothTransition = False
+        camera.perspectiveAngle = 2.0 * math.atan((24.0 / 2.0) / float(query.get('focalLength', 50.0)))
+        viewport.camera = camera
+        viewport.refresh()
+    else:
+        old['camera'] = setControlDefinition('ViewCameraCommand', query.get('camera', None), adsk, ui)
+
     if 'view' in query:
         if query['view'].lower() == 'home':
             viewport.goHome()
@@ -110,7 +132,6 @@ def handle(query:dict, app, ui, adsk) -> any:
         else:
             app.activeDocument.design.namedViews.itemByName(query['view']).apply()
 
-    
     lookup = {
         'show': Visibility.SHOW,
         'hide': Visibility.HIDE,
@@ -125,17 +146,7 @@ def handle(query:dict, app, ui, adsk) -> any:
                 for item in query[key]:
                     setVisibility(design, item, value)
 
-    if 'focalLength' in query:
-        old['camera'] = setControlDefinition('ViewCameraCommand', 1, adsk, ui)
-        camera = viewport.camera
-        camera.cameraType = adsk.core.CameraTypes.PerspectiveCameraType
-        camera.isSmoothTransition = False
-        camera.perspectiveAngle = 2.0 * math.atan((24.0 / 2.0) / float(query.get('focalLength', 50.0)))
-        viewport.camera = camera
-        viewport.refresh()
-    else:
-        old['camera'] = setControlDefinition('ViewCameraCommand', query.get('camera', None), adsk, ui)
-
+    ui.activeSelections.clear()
     adsk.doEvents()
     if visualStyle is not None:    
         old['visibility'] = setControlDefinition('VisibilityOverrideCommand', False, adsk, ui)
@@ -159,7 +170,7 @@ def handle(query:dict, app, ui, adsk) -> any:
         # fov = 2.0 * math.atan((24.0 / 2.0) / float(query.get('focalLength', 50.0)))
         # distance_multiplier = (1.0 / fov) / 2.1227368058100704
         # direction.scaleBy(distance * .45 * distance_multiplier)
-        direction.scaleBy(distance * .45)
+        direction.scaleBy(distance * .455)
         
         eye = camera.target.copy()
         eye.translateBy(direction)
@@ -185,7 +196,6 @@ def handle(query:dict, app, ui, adsk) -> any:
         render.isBackgroundTransparent = bool(query.get('isBackgroundTransparent', False))
         render.renderQuality = quality
 
-
         frame = render.startLocalRender(path, camera)
     
     try:
@@ -200,9 +210,9 @@ def handle(query:dict, app, ui, adsk) -> any:
     with open(path, 'rb') as file:
         content = file.read()
     os.remove(path)
-    return BinaryResponse(content)
+    return PngResponse(content)
 
 if __name__ == "__main__":
     import _client_
     # _client_.test(__file__, {"view": "MotionStudy_Latch", "isolate": "Direct Drive x4", "hide": "Filament Spools", "focalLength": 200, "quality": "ShadedWithVisibleEdgesOnly", "width": 400, "height": 400}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)
-    _client_.test(__file__, {"view": "MotionStudy_Latch", "isolate": "Direct Drive x4", "focalLength": 200, "quality": "ShadedWithVisibleEdgesOnly", "width": 400, "height": 400}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)
+    _client_.test(__file__, {'view': 'MotionStudy_Latch', 'isolate': 'Direct Drive x4', 'hide': "['Filament Spools', 'latch_a', 'latch_b', 'latch_mirror_a', 'latch_mirror_b']", 'focalLength': '200', 'quality': 'ShadedWithVisibleEdgesOnly', 'width': '400', 'height': '400'}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)

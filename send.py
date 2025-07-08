@@ -258,11 +258,20 @@ def post(endpoint, data:dict=None, file_path_hint=None, timeout=60):
         return resp_data
 
 def file(file):
-    content = re.sub(r'\x1b\[[^m]*m', '', file.read())
-    try:
-        return json.loads(content)
-    except:
-        return content
+    result: dict|list[dict] = None
+    for f in file:
+        content = re.sub(r'\x1b\[[^m]*m', '', f.read())
+        data = json.loads(content)
+
+        if result is None:
+            result = data
+        elif isinstance(result, list) and isinstance(data, list):
+            result.extend(data)
+        elif isinstance(result, dict) and isinstance(data, dict):
+            result.update(data)
+        else:
+            raise TypeError("Incompatible data types: cannot merge dict and list or vice versa.")
+    return result
 
 def match_with_files(data:list, folder:str, accent_color:str) -> list:
     if not os.path.exists(folder):
@@ -363,7 +372,21 @@ def match_with_files(data:list, folder:str, accent_color:str) -> list:
 
     sys.stderr.write("\nSummary: " + Term.green(f"{len(data)} processed") + ", " + Term.yellow(f"{warnings} warnings") + ", " + Term.red(f"{errors} errors") + ".\n")
 
-    return [x for x in data if len(x['bodies']) > 0]
+    result = {}
+    for component in [x for x in data if len(x['bodies']) > 0]:
+        for body in component['bodies']:
+            if not body['path'] in result:
+                result[body['path']] = []
+            result[body['path']].append({
+                'body_id': body['id'],
+                'body_name': body['name'],
+                'component_id': component['id'],
+                'component_name': component['name'],
+                'color': body['color'],
+                'count': component['count'],
+            })
+
+    return result
 
 def test(file_path, query = {}, output=None, timeout=60):
     global suppress_errors
@@ -418,11 +441,9 @@ def main():
     group.add_argument('--get', type=str, help='Send a GET request.')
     group.add_argument('--post', type=str, help='Send a POST request with JSON data.')
 
-    parser.add_argument('--file', "-f", type=argparse.FileType('r', encoding='utf-8'), help='Reads response/data from a file.')
+    parser.add_argument('--file', "-f", action='append', type=argparse.FileType('r', encoding='utf-8'), help='Reads response/data from a file.')
     parser.add_argument('--data', "-d", type=str, help='JSON data to send with POST request.')
     parser.add_argument('--jmespath', "-j", action='append', help='JMESPath to extract data from the response.')
-    parser.add_argument('--group', "-g", type=GroupArgument, help='Group selector for the request.')
-    parser.add_argument('--group-jmespath', "-gj", type=str, help='JMESPath to extract data from the group.')
     parser.add_argument('--timeout', "-t", type=int, default=60, help='Timeout for the request in seconds.')
 
     parser.add_argument('--match-with-files', "-m", type=str, help='Find files in a folder and match them with the response.')
@@ -437,7 +458,8 @@ def main():
     # print(repr(sys.argv[1:]))
     # exit(0)
     if len(sys.argv) == 1:
-        args = parser.parse_args(['--file', '.\\obj\\components.printed.json', '--match-with-files', 'STLs', '--accent-color', 'C43527FF'])
+        # args = parser.parse_args(['--file', 'C:\\GIT\\YAMMU\\obj\\components.printed.json', '--match-with-files', 'STLs', '--accent-color', 'C43527FF'])
+        args = parser.parse_args(['--file', 'C:\\GIT\\YAMMU\\obj\\yammu.files.json', "--jmespath", "\"[?name == 'Assembly']\""])
     else:
         args = parser.parse_args()
     
@@ -449,7 +471,7 @@ def main():
     data = {}
     if args.file and (args.get or args.post):
         items = file(args.file)
-        data.update(items[0])
+        data.update(items)
     if args.data:
         data.update(json.loads(args.data))
 
@@ -466,15 +488,6 @@ def main():
     if args.jmespath:
         for x in args.jmespath:
             result = jmespath.search(x, result)
-
-    if args.group_jmespath:
-        group = {}
-        for item in result:
-            key = jmespath.search(args.group_jmespath, item)
-            if key not in group:
-                group[key] = []
-            group[key].append(item)
-        result = group
 
     if args.match_with_files:
         result = match_with_files(result, args.match_with_files, args.accent_color)

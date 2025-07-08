@@ -17,7 +17,7 @@ def handle(path:str, app) -> any:
         for body in getAllBodies(design):
             appendBody(result, body)
 
-        return [v for _, v in result.items()]
+        return {k:v for k, v in result.items()}
 
     elif path == "/components":
         for component in [x.component for x in design.rootComponent.allOccurrences]:
@@ -25,9 +25,9 @@ def handle(path:str, app) -> any:
             if not json['id'] in result:
                 result[json['id']] = json
             result[json['id']]['count'] += 1
-        
-        return [v for _, v in result.items() if len(v['bodies']) > 0]
-    
+
+        return {k:v for k, v in result.items() if len(v['bodies']) > 0}
+
     raise Exception(f"Unknown path: {path}. Supported paths are: /bodies, /components")
 
 if __name__ == "__main__":

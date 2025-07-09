@@ -2,6 +2,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 import adsk.core # type: ignore
+import importlib
 import json
 import os
 import routes
@@ -9,6 +10,7 @@ import sys
 import threading
 import traceback
 import uuid
+
 
 startup_time = datetime.now()
 app = None
@@ -25,7 +27,10 @@ def get_context(additional={}):
         "os"   : os,
         "sys"  : sys,
         "ui"   : ui,
-        "startup_time": startup_time,
+        "status": {
+            "startup_time": startup_time,
+            "routes": sorted(["/eval", "/exec", "/restart", "/reload"] + [x for x in routes.routes.keys()])
+        }
     }
     context.update(additional)
     return context
@@ -44,13 +49,15 @@ def object2json(obj, max_depth, depth=0):
         result = obj
     elif obj is None:
         result = None
-    elif isinstance(obj, (list, tuple)) and not hasattr(obj, '__iter__'):
+    elif isinstance(obj, (list, tuple)):
         result = [object2json(x, max_depth, depth+1) for x in obj] if depth < max_depth else []
     elif isinstance(obj, dict):
         result = {k: object2json(v, max_depth, depth+1) for k, v in obj.items()} if depth < max_depth else {}
     elif hasattr(obj, 'asArray') and callable(obj.asArray):
         result = [object2json(v, max_depth, depth+1) for v in obj.asArray()] if depth < max_depth else []
     elif hasattr(obj, 'asDict') and callable(obj.asDict):
+        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}    
+    elif hasattr(obj, '__iter__') and callable(obj.__iter__):
         result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}
     else:
         result = {k: object2json(attribute2json(obj, k), max_depth, depth+1) for k in sorted(dir(obj), key=sort_attrs) if not k.startswith('_')}  if depth < max_depth else {}
@@ -97,6 +104,27 @@ class CustomEventArgument:
     def __repr__(self):
         return self.__str__()
 
+def handle_restart(path:str, app) -> any:
+    modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
+    my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
+    
+    result = {}
+    for module in my_modules:
+        if module == "server":
+            continue
+
+        try:
+            importlib.reload(sys.modules[module])
+            result[module] = "Reloaded"
+        except:
+            del sys.modules[module]
+            result[module] = "Removed"
+    
+    if path == "/restart":
+        result["server"] = "Restarting.."
+        app.fireCustomEvent('FusionHeadless.Restart')
+    return result
+
 class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
     def __init__(self):
         super().__init__()
@@ -108,6 +136,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
             if not arg:
                 return  # If the argument is not found, do nothing
             elif arg.path == "/eval" or arg.path == "/exec":
+                # evaluate or execute are low-level operations so a running server can be recovered
                 if arg.path == "/eval":
                     arg.result = eval(arg.query.get("code", ""), arg.context)
                 elif arg.path == "/exec":
@@ -116,8 +145,26 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
 
                 if "depth" in arg.query:
                     arg.result = object2json(arg.result, max_depth=int(arg.query["depth"]))
-            elif arg.path == "/routes":
-                arg.result = sorted(["/eval", "/exec", "/routes"] + [x for x in routes.routes.keys()])
+            elif arg.path == "/restart" or arg.path == "/reload":
+                # restart and reload are low-level operations so a running server can be recovered
+                modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
+                my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
+                
+                arg.result = {}
+                for module in my_modules:
+                    if module == "server":
+                        continue
+
+                    try:
+                        importlib.reload(sys.modules[module])
+                        arg.result[module] = "Reloaded"
+                    except:
+                        del sys.modules[module]
+                        arg.result[module] = "Removed"
+                
+                if arg.path == "/restart":
+                    arg.result["server"] = "Restarting.."
+                    app.fireCustomEvent('FusionHeadless.Restart')
             else:
                 handler = routes.get_handler(arg.path)
                 if handler:

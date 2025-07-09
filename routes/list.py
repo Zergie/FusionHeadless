@@ -1,7 +1,7 @@
 """
 Handles listing of components or bodies from the active Fusion 360 design based on the provided path.
 """
-from _utils_ import getAllBodies, body2dict, component2dict
+from _utils_ import get_allBodies, body2dict, component2dict
 
 def appendBody(result, body) -> None:
     dict = body2dict(body, count=0)
@@ -14,7 +14,7 @@ def handle(path:str, app) -> any:
 
     result = {}
     if path == "/bodies":
-        for body in getAllBodies(design):
+        for body in get_allBodies(design):
             appendBody(result, body)
 
         return {k:v for k, v in result.items()}

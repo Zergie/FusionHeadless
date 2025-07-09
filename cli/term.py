@@ -33,3 +33,7 @@ class Term:
     @classmethod
     def blue(cls, text):
         return f"\033[94m{text}{cls.RESET}"
+    
+    @classmethod
+    def italic(cls, text):
+        return f"\033[3m{text}{cls.RESET}"

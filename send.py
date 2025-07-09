@@ -14,6 +14,29 @@ host = 'localhost'
 port = 5000
 cli.initialize(host, port)
 
+def output(result, path:str, verbose:bool=False):
+    if os.path.exists(path):
+        if isinstance(result, bytes):
+            old = open(path, 'rb').read()
+        else:
+            old = json.loads(open(path, 'r').read())
+
+        if old != result:
+            doUpdate = True
+        else:
+            preamble = f"{path}: " if verbose else ""
+            print(f"{preamble}Responses are identical, output file not updated.")
+            doUpdate = False
+    else:
+        doUpdate = True
+        
+    if doUpdate:
+        if isinstance(result, bytes):
+            with open(path, 'wb') as f:
+                f.write(result)
+        else:
+            json.dump(result, open(path, 'w'), indent=2, ensure_ascii=False)
+
 def main():
     parser = argparse.ArgumentParser(description="Send HTTP requests to a server.")
 
@@ -27,20 +50,22 @@ def main():
     parser.add_argument('--timeout', "-t", type=int, default=60, help='Timeout for the request in seconds.')
 
     parser.add_argument('--match-with-files', "-m", type=str, help='Find files in a folder and match them with the response.')
-    parser.add_argument('--accent-color', "-ac", type=str,  help='Accent color for the mapping with filenames.')
-
+    parser.add_argument('--base-material', type=str, help='Base material for matching files.')
+    parser.add_argument('--accent-material', type=str, help='Accent material for matching files.')
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--output', "-o", type=str, help='File path to save the response.')
-    group.add_argument('--append', "-a", type=str, help='File path to save the response as an append operation.')
     group.add_argument('--plain', action='store_true', help='Output plain text without formatting.')
+    group.add_argument('--outdir', "-O", type=str, help='Output directory to save the response files.')
 
     # print(repr(sys.argv[1:]))
     # exit(0)
     args = parser.parse_args()
     
-    if args.accent_color and not args.match_with_files:
-        parser.error("Accent color requires --match-with-files to be specified.")
+    if args.base_material and not args.match_with_files:
+        parser.error("--base-material requires --match-with-files to be specified.")
+    if args.accent_material and not args.match_with_files:
+        parser.error("--accent-material requires --match-with-files to be specified.")
 
     sys.addaudithook(cli.pprint_hook)
 
@@ -66,48 +91,21 @@ def main():
             result = jmespath.search(x, result)
 
     if args.match_with_files:
-        result = match_with_files(result, args.match_with_files, args.accent_color)
+        result = match_with_files(result, args.match_with_files, args.base_material, args.accent_material)
 
     if args.output:
-        if os.path.exists(args.output):
-            if isinstance(result, bytes):
-                old = open(args.output, 'rb').read()
-            else:
-                old = json.loads(open(args.output, 'r').read())
+        output(result, args.output)
+    elif args.outdir:
+        mapping = {}
+        if isinstance(result, list):
+            for i in range(len(result)):
+                mapping[i] = result[i]
+        elif isinstance(result, dict):
+            mapping = result
 
-            if old != result:
-                doUpdate = True
-            else:
-                print("Responses are identical, output file not updated.")
-                doUpdate = False
-        else:
-            doUpdate = True
-        
-        if doUpdate:
-            if isinstance(result, bytes):
-                with open(args.output, 'wb') as f:
-                    f.write(result)
-            else:
-                json.dump(result, open(args.output, 'w'), indent=2, ensure_ascii=False)
-    elif args.append:
-        if not isinstance(result, list):
-            parser.error("Append operation requires a list of items to append.")
-        elif len(result) == 0:
-            parser.error("No data to append, skipping append operation.")
-            
-        if os.path.exists(args.append):
-            try:
-                old = json.loads(open(args.append, 'r').read())
-            except json.JSONDecodeError:
-                old = []
+        for key, value in mapping.items():
+            output(value, os.path.join(args.outdir, f"{key}.json"), verbose=True)
 
-            if not isinstance(old, list):
-                parser.error("Append file is not a valid JSON array.")
-
-            old.append(result)
-            result = old
-        
-        json.dump(result, open(args.append, 'w'), indent=2, ensure_ascii=False)
     elif args.plain:
         print(json.dumps(result))
     else:

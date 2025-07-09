@@ -1,6 +1,15 @@
 import hashlib
 from http.server import BaseHTTPRequestHandler
+import os
 
+
+########  ########  ######  ########   #######  ##    ##  ######  ########  ######  
+##     ## ##       ##    ## ##     ## ##     ## ###   ## ##    ## ##       ##    ## 
+##     ## ##       ##       ##     ## ##     ## ####  ## ##       ##       ##       
+########  ######    ######  ########  ##     ## ## ## ##  ######  ######    ######  
+##   ##   ##             ## ##        ##     ## ##  ####       ## ##             ## 
+##    ##  ##       ##    ## ##        ##     ## ##   ### ##    ## ##       ##    ## 
+##     ## ########  ######  ##         #######  ##    ##  ######  ########  ######  
 class HttpResponse:
     def __init__(self, status_code: int):
         self.status_code = status_code
@@ -38,7 +47,21 @@ class PngResponse(HttpResponse):
     def send_content(self, requestHandler: BaseHTTPRequestHandler):
         requestHandler.wfile.write(self.content)
 
-def getAllBodies(design):
+
+##     ## ######## ##       ########  ######## ########       ######## ##     ## ##    ##  ######  ######## ####  #######  ##    ##  ######  
+##     ## ##       ##       ##     ## ##       ##     ##      ##       ##     ## ###   ## ##    ##    ##     ##  ##     ## ###   ## ##    ## 
+##     ## ##       ##       ##     ## ##       ##     ##      ##       ##     ## ####  ## ##          ##     ##  ##     ## ####  ## ##       
+######### ######   ##       ########  ######   ########       ######   ##     ## ## ## ## ##          ##     ##  ##     ## ## ## ##  ######  
+##     ## ##       ##       ##        ##       ##   ##        ##       ##     ## ##  #### ##          ##     ##  ##     ## ##  ####       ## 
+##     ## ##       ##       ##        ##       ##    ##       ##       ##     ## ##   ### ##    ##    ##     ##  ##     ## ##   ### ##    ## 
+##     ## ######## ######## ##        ######## ##     ##      ##        #######  ##    ##  ######     ##    ####  #######  ##    ##  ######  
+
+def log(message:str, mode:str = 'a') -> None:
+    path = os.path.join(os.path.dirname(__file__), "debug.log")
+    with open(path, mode) as log_file:
+        log_file.write(f"{message}\n")
+
+def get_allBodies(design):
     if not hasattr(design, "rootComponent"):
         raise Exception("Design does not have a rootComponent.")
 
@@ -49,10 +72,62 @@ def getAllBodies(design):
         for body in occ.component.bRepBodies:
             yield body
 
+class Visibility:
+    HIDE = 0
+    SHOW = 1
+    ISOLATE = 2
+
+def setVisibility(design, filter:str, value:int) -> None:
+    if filter == "all":
+        for _ in range(2):
+            for body in get_allBodies(design):
+                body.isLightBulbOn = True if value == Visibility.SHOW else False
+            for occ in design.rootComponent.allOccurrences:
+                occ.isLightBulbOn = True if value == Visibility.SHOW else False
+    else:
+        for _ in range(2):
+            for occ in design.rootComponent.allOccurrences:
+                match = re.match(r"^(?:(.+)( v\d+)|(.+))(:\d)$", occ.name)
+                if match:
+                    name = match.group(1) or match.group(3)
+                    version = match.group(2) or None
+                    occurrence = match.group(4)
+
+                    if name == filter:
+                        if value == Visibility.ISOLATE:
+                            occ.isIsolated = True
+
+                            stack = [occ]
+                            while stack:
+                                item = stack.pop()
+                                if hasattr(item, 'childOccurrences'):
+                                    for x in item.childOccurrences:
+                                        stack.append(x)
+                                if not item.isVisible:
+                                    item.isLightBulbOn = True
+
+                        elif value == Visibility.SHOW:
+                            occ.isLightBulbOn = True
+                        elif value == Visibility.HIDE:
+                            occ.isLightBulbOn = False
+                    else:
+                        for body in occ.bRepBodies:
+                            if body.name == filter:
+                                if value == Visibility.ISOLATE:
+                                    occ.isIsolated = True
+                                    body.isLightBulbOn = True
+                                elif value == Visibility.SHOW:
+                                    body.isLightBulbOn = True
+                                elif value == Visibility.HIDE:
+                                    body.isLightBulbOn = False
+
 def body2dict(body, **kwargs) -> dict:
+    def str2hash(string: str) -> str:
+        hash = hashlib.md5(string.encode()).hexdigest()
+        return f"{hash[:8]}-{hash[8:12]}-{hash[12:16]}-{hash[16:20]}-{hash[20:]}"
+
     def dict2hash(dict) -> str:
-        hash = hashlib.md5(str(dict).encode()).hexdigest()
-        return f"{hash[:8]}-{hash[8:12]}-{hash[12:16]}-{hash[16:20]}-{hash[20:]}"  
+        return str2hash(str(dict))
     
     def body2color(body) -> str:
         colors = [x for x in body.appearance.appearanceProperties if x.name == "Color"]
@@ -62,21 +137,23 @@ def body2dict(body, **kwargs) -> dict:
             return "00000000"
         return "%0.2X%0.2X%0.2XFF" % (colors[0].value.red, colors[0].value.green, colors[0].value.blue)
     
-    props = {
+    result = {
+        'id'          : str2hash("-".join((body.name, body.parentComponent.id))),
+        'hash'        : None,
         'name'        : body.name,
-        'volume'      : body.physicalProperties.volume,
-        'mass'        : body.physicalProperties.mass,
-        'area'        : body.physicalProperties.area,
+        'volume'      : body.physicalProperties.volume, # needed to identify changes
+        'mass'        : body.physicalProperties.mass,   # needed to identify changes
+        'area'        : body.physicalProperties.area,   # needed to identify changes
+        'color'       : body2color(body),               # needed to identify changes
         'centerOfMass': [round(v, 2) for v in body.physicalProperties.centerOfMass.asArray()],
-        'color'       : body2color(body),
         'material'    : body.material.name if body.material else None,
+        'orientation' : list({tuple(round(x, 2) for x in face.geometry.normal.asArray()) for face in body.faces if "Build Plate" in face.appearance.name}),
         'boundingBox' : {
             'min': [round(v, 2) for v in body.boundingBox.minPoint.asArray()],
             'max': [round(v, 2) for v in body.boundingBox.maxPoint.asArray()],
         },
     }
-    result = { 'id' : dict2hash(props) }
-    result.update(props)
+    result['hash'] = dict2hash(result)
     result.update(kwargs)
     return result
 

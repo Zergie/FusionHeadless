@@ -5,6 +5,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from Exceptions import raise_error
 from ContextVariable import ContextVariable
 from my_printer import pprint
+from term import Term
 
 host = None
 port = None
@@ -88,7 +89,7 @@ def test(file_path, query = {}, output=None, timeout=60):
     def_handle = [i for i in code.splitlines() if re.match(r'def\s*handle\s*\(', i)][0]
     def_handle_params = [i.split(':')[0].strip(' ,)') for i in re.findall(r'([^,()]+\s*[,)])', def_handle)]
     for i in def_handle_params:
-        if i in ('app', 'adsk', 'ui', 'os', 'sys', 'startup_time'):
+        if i in ('app', 'adsk', 'ui', 'os', 'sys', 'status'):
             # If the context variable is one of these, we assume it's already defined
             context[i] = ContextVariable(i)
         elif i == 'query':
@@ -122,3 +123,4 @@ def test(file_path, query = {}, output=None, timeout=60):
         else:
             with open(output, 'w') as f:
                 json.dump(response, f, indent=2, ensure_ascii=False)
+        print(Term.italic(f"Response written to {output}"))

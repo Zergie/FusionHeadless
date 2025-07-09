@@ -177,9 +177,6 @@ Renders the current view or document and returns the image.
 ### `POST /restart`
 Restarts the FusionHeadless server.
 
-### `GET /routes`
-Returns a list of all available API routes.
-
 ### `POST /select`
 Selects an entity in the Fusion 360 UI by ID or name.
 

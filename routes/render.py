@@ -21,68 +21,8 @@ import os
 import re
 import tempfile
 import uuid
-from _utils_ import PngResponse, setControlDefinition
+from _utils_ import PngResponse, setControlDefinition, get_allBodies, setVisibility, Visibility
 
-def all_bodies(design) -> any:
-    for body in design.rootComponent.bRepBodies:
-        yield body
-
-    for occ in design.rootComponent.allOccurrences:
-        for body in occ.bRepBodies:
-            yield body
-
-class Visibility:
-    HIDE = 0
-    SHOW = 1
-    ISOLATE = 2
-
-def log(message:str, mode:str = 'a') -> None:
-    with open("C:\\GIT\\YAMMU\\FusionAddons\\FusionHeadless\\routes\\render.py.log", mode) as log_file:
-        log_file.write(f"{message}\n")
-
-def setVisibility(design, filter:str, value:int) -> None:
-    if filter == "all":
-        for _ in range(2):
-            for body in all_bodies(design):
-                body.isLightBulbOn = True if value == Visibility.SHOW else False
-            for occ in design.rootComponent.allOccurrences:
-                occ.isLightBulbOn = True if value == Visibility.SHOW else False
-    else:
-        for _ in range(2):
-            for occ in design.rootComponent.allOccurrences:
-                match = re.match(r"^(?:(.+)( v\d+)|(.+))(:\d)$", occ.name)
-                if match:
-                    name = match.group(1) or match.group(3)
-                    version = match.group(2) or None
-                    occurrence = match.group(4)
-
-                    if name == filter:
-                        if value == Visibility.ISOLATE:
-                            occ.isIsolated = True
-
-                            stack = [occ]
-                            while stack:
-                                item = stack.pop()
-                                if hasattr(item, 'childOccurrences'):
-                                    for x in item.childOccurrences:
-                                        stack.append(x)
-                                if not item.isVisible:
-                                    item.isLightBulbOn = True
-
-                        elif value == Visibility.SHOW:
-                            occ.isLightBulbOn = True
-                        elif value == Visibility.HIDE:
-                            occ.isLightBulbOn = False
-                    else:
-                        for body in occ.bRepBodies:
-                            if body.name == filter:
-                                if value == Visibility.ISOLATE:
-                                    occ.isIsolated = True
-                                    body.isLightBulbOn = True
-                                elif value == Visibility.SHOW:
-                                    body.isLightBulbOn = True
-                                elif value == Visibility.HIDE:
-                                    body.isLightBulbOn = False
     
 def handle(query:dict, app, ui, adsk) -> any:
     path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}.png")

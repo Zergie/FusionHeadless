@@ -1,6 +1,5 @@
-import hashlib
+import os, re, hashlib
 from http.server import BaseHTTPRequestHandler
-import os
 
 
 ########  ########  ######  ########   #######  ##    ##  ######  ########  ######  

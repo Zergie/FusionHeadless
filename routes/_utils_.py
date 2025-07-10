@@ -61,6 +61,17 @@ def log(message:str, mode:str = 'a') -> None:
     with open(path, mode) as log_file:
         log_file.write(f"{message}\n")
 
+def get_assembly_contexts(occurrence) -> list[any]:
+    assembly_contexts = []
+    if occurrence.assemblyContext:
+        assembly_contexts.append(occurrence.assemblyContext)
+        occ = occurrence.assemblyContext
+        while occ.assemblyContext:
+            assembly_contexts.append(occ.assemblyContext)
+            occ = occ.assemblyContext
+        assembly_contexts.reverse()
+    return assembly_contexts
+
 def get_allBodies(design):
     if not hasattr(design, "rootComponent"):
         raise Exception("Design does not have a rootComponent.")
@@ -137,20 +148,28 @@ def body2dict(body, **kwargs) -> dict:
             return "00000000"
         return "%0.2X%0.2X%0.2XFF" % (colors[0].value.red, colors[0].value.green, colors[0].value.blue)
     
+    def round2(value, precision):
+        v = round(value, precision)
+        if v > -1/10**precision and v < 1/10**precision:
+            return 0.0
+        else:
+            return v
+        
+
     result = {
         'id'          : str2hash("-".join((body.name, body.parentComponent.id))),
         'hash'        : None,
         'name'        : body.name,
-        'volume'      : body.physicalProperties.volume, # needed to identify changes
-        'mass'        : body.physicalProperties.mass,   # needed to identify changes
-        'area'        : body.physicalProperties.area,   # needed to identify changes
+        'volume'      : round2(body.physicalProperties.volume, 5), # needed to identify changes
+        'mass'        : round2(body.physicalProperties.mass  , 5),   # needed to identify changes
+        'area'        : round2(body.physicalProperties.area  , 5),   # needed to identify changes
         'color'       : body2color(body),               # needed to identify changes
-        'centerOfMass': [round(v, 2) for v in body.physicalProperties.centerOfMass.asArray()],
+        'centerOfMass': [round2(v, 3) for v in body.physicalProperties.centerOfMass.asArray()],
         'material'    : body.material.name if body.material else None,
-        'orientation' : list({tuple(round(x, 2) for x in face.geometry.normal.asArray()) for face in body.faces if "Build Plate" in face.appearance.name}),
+        'orientation' : list({tuple(round2(-x, 5) if face.isParamReversed else round2(x, 5) for x in face.geometry.normal.asArray()) for face in body.faces if "Build Plate" in face.appearance.name}),
         'boundingBox' : {
-            'min': [round(v, 2) for v in body.boundingBox.minPoint.asArray()],
-            'max': [round(v, 2) for v in body.boundingBox.maxPoint.asArray()],
+            'min': [round2(v, 3) for v in body.boundingBox.minPoint.asArray()],
+            'max': [round2(v, 3) for v in body.boundingBox.maxPoint.asArray()],
         },
     }
     result['hash'] = dict2hash(result)

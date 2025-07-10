@@ -147,17 +147,13 @@ Executes Python code in the Fusion 360 environment.
 - `depth`: optional, the maximum recursion depth for object serialization
 
 
-### `POST /export/<format>`
-Exports the active document, component, or body to file. Returns the file path. Available formats are: 
-
-- `POST /export/step`
-- `POST /export/stl`
-- `POST /export/3mf`
-- `POST /export/obj`
+### `POST /export`
+Exports the active document, component, or body to file.
 
 #### 🧠 Parameters:
 - `component`: optional, the name of the component to export (if not specified, exports the active document)
 - `body`: optional, the name of the body to export (if not specified, exports the entire component)
+- `format`: the format to export to (e.g., `stl`, `step`, `3mf`, `obj`)
 
 ### `GET /files`
 Returns a list of all files in all projects.

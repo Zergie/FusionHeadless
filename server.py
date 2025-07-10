@@ -62,18 +62,17 @@ def object2json(obj, max_depth, depth=0):
     else:
         result = {k: object2json(attribute2json(obj, k), max_depth, depth+1) for k in sorted(dir(obj), key=sort_attrs) if not k.startswith('_')}  if depth < max_depth else {}
 
-    if isinstance(result, (list, tuple)):
+    # Check if the object's type is a built-in type
+    if isinstance(type(obj), type) and type(obj).__module__ == 'builtins':
+        pass
+    elif isinstance(result, (list, tuple)):
         result = {
             'items': [x for x in result if x is not None],
             'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
-            # 'objectType': type(obj).__name__,
-            # 'depth': depth
         }
     elif isinstance(result, dict):
         result.update({
             'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
-            # 'objectType': type(obj).__name__,
-            #  'depth': depth
         })
         result = {k: v for k, v in result.items() if v is not None}
     

@@ -47,6 +47,7 @@ def main():
     parser.add_argument('--file', "-f", action='append', type=argparse.FileType('r', encoding='utf-8'), help='Reads response/data from a file.')
     parser.add_argument('--data', "-d", type=str, help='JSON data to send with POST request.')
     parser.add_argument('--jmespath', "-j", action='append', help='JMESPath to extract data from the response.')
+    parser.add_argument('--eval', "-py", type=str, help='Python expression to evaluate on the response data. Use @ to access the response.')
     parser.add_argument('--timeout', "-t", type=int, default=60, help='Timeout for the request in seconds.')
 
     parser.add_argument('--match-with-files', "-m", type=str, help='Find files in a folder and match them with the response.')
@@ -90,6 +91,14 @@ def main():
         for x in args.jmespath:
             result = jmespath.search(x, result)
 
+    if args.eval:
+        result = eval(args.eval.replace("@", "__json__"), {'__json__': result, 'os': os})
+
+        if isinstance(result, list) or isinstance(result, dict) or isinstance(result, str):
+            pass
+        elif hasattr(result, '__iter__') and not isinstance(result, str):
+            result = list(result)
+
     if args.match_with_files:
         result = match_with_files(result, args.match_with_files, args.base_material, args.accent_material)
 
@@ -104,7 +113,7 @@ def main():
             mapping = result
 
         for key, value in mapping.items():
-            output(value, os.path.join(args.outdir, f"{key}.json"), verbose=True)
+            output(value, os.path.join(args.outdir, key), verbose=True)
 
     elif args.plain:
         print(json.dumps(result))

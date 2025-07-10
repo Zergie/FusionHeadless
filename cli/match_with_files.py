@@ -1,7 +1,9 @@
+import hashlib
 import os
 import re
 import sys
 from term import Term
+import math
 
 class FileItem:
     def __init__(self, root, name):
@@ -35,6 +37,10 @@ class FileItem:
         else:
             return compare_key == self._get_compare_key(self.name)
 
+def str2hash(string: str) -> str:
+    hash = hashlib.md5(string.encode()).hexdigest()
+    return f"{hash[:8]}-{hash[8:12]}-{hash[12:16]}-{hash[16:20]}-{hash[20:]}"
+
 errors = []
 warnings = []
 def error(message):
@@ -50,7 +56,7 @@ def warning(message):
 class Materials:
     base_material = None
     accent_material = None
-def match_with_files(data:list, folder:str, base_material:str, accent_material:str) -> list:
+def match_with_files(data:dict, folder:str, base_material:str, accent_material:str) -> dict:
     global errors, warnings
     errors = []
     warnings = []
@@ -60,8 +66,8 @@ def match_with_files(data:list, folder:str, base_material:str, accent_material:s
     if not os.path.exists(folder):
         raise FileNotFoundError(f"Folder '{folder}' does not exist.")
 
-    if not isinstance(data, list):
-        raise TypeError("Data must be a list of items with 'name' attribute.")
+    if not isinstance(data, dict):
+        raise TypeError("Data must be a dictionary with component names as keys.")
 
     def clean_name(name):
         result = re.sub(r'(^\[a\]_|_x\d+( \(\d+\))?$|( \(\d+\))$)', '', name).lower()
@@ -95,23 +101,33 @@ def match_with_files(data:list, folder:str, base_material:str, accent_material:s
                 fileItems.append(FileItem(root=root, name=name))
 
     suggested_names = {}
-    for component in data:
+    printable = []
+    for component in data.values():
+        component_url = Term.url(component['name'], '/select', id=component['id'])
         if 'name' not in component:
-            raise ValueError(f"Each item in data must have a 'name' attribute. ({component})")
+            raise ValueError(f"{component_url} does not have a 'name' attribute.")
         if 'bodies' not in component:
-            raise ValueError(f"Each item in data must have a 'bodies' attribute. ({component})")
-        if not isinstance(component['bodies'], list):
-            raise TypeError(f"'bodies' attribute must be a list. ({component})")
+            raise ValueError(f"{component_url} does not have a 'bodies' attribute.")
+        component['is_printed'] = True
 
         for body in component['bodies']:
+            body_url = Term.url(component['name'] + ' - ' + body['name'], '/select', id=component['id'])
             if 'id' not in body:
-                raise ValueError(f"Each body in 'bodies' must have an 'id' attribute. ({body})")
+                raise ValueError(f"{body_url} does not have an 'id' attribute.")
             if 'name' not in body:
-                raise ValueError(f"Each body in 'bodies' must have a 'name' attribute. ({body})")
+                raise ValueError(f"{body_url} does not have a 'name' attribute.")
+            if 'material' not in body:
+                raise ValueError(f"{body_url} does not have a 'material' attribute.")
+            
+            if body['material'] not in [Materials.base_material, Materials.accent_material]:
+                body['is_printed'] = False
+                continue
             if 'orientation' not in body or len(body['orientation']) == 0:
-                warning(f"{Term.url(component['name'] + ' - ' + body['name'], '/select', id=component['id'])} does not have an 'orientation'.")
+                error(f"{body_url} does not have an 'orientation'.")
+                body['is_printed'] = False
             if 'orientation' in body and len(body['orientation']) > 1:
-                error(f"{Term.url(component['name'] + ' - ' + body['name'], '/select', id=component['id'])} has more than one orientation.")
+                error(f"{body_url} has more than one orientation.")
+                body['is_printed'] = False
             
             name = get_name(component['name'], body['name'], component['count'], body['material'])
             matches = [fileItem for fileItem in fileItems if fileItem == name]
@@ -131,8 +147,7 @@ def match_with_files(data:list, folder:str, base_material:str, accent_material:s
                 matches = [fileItem for fileItem in fileItems if fileItem == name]
                 
             if len(matches) == 0:
-                url = Term.url(component['name'], '/select', id=component['id'])
-                warning(f"No matching file found for {url} - {body['name']} -> {name}")
+                warning(f"No matching file found for {body_url} - {body['name']} -> {name}")
                 name = get_name(component['name'], body['name'], component['count'], body['material'])
                 fileItem = FileItem(folder, name)
                 fileItems.append(fileItem)
@@ -150,11 +165,17 @@ def match_with_files(data:list, folder:str, base_material:str, accent_material:s
                 body['path'] = fileItem.path
                     
             else:
-                url = Term.url(component['name'], '/select', id=component['id'])
                 m = "\n".join([f"- {match.path}" for match in matches])
-                error(f"Multiple matching files found for {url} - {body['name']} -> {names}:\n{m}")
+                error(f"Multiple matching files found for {body_url} - {body['name']} -> {names}:\n{m}")
 
             component['bodies'] = [b for b in component['bodies'] if 'id' in b]
+
+        printable_bodies = [x for x in component['bodies'] if x.get('is_printed', True)]
+        if len(printable_bodies) > 0:
+            printable.append(component)
+            printable[-1].update({
+                'bodies': printable_bodies,
+            })
 
     for fileItem in [x for x in fileItems if len(x.assigned) > 1]:
         assigned = ", ".join([Term.url(x["name"], "/select", id=x["id"]) for x in fileItem.assigned])
@@ -163,13 +184,8 @@ def match_with_files(data:list, folder:str, base_material:str, accent_material:s
     for fileItem in [x for x in fileItems if len(x.assigned) == 0]:
         warning(f"File {fileItem.path} was not assigned to any component.")
 
-    for component in [x for x in data if len(x['bodies']) > 0]:
+    for component in printable:
         for body in component['bodies']:
-            if 'path' not in body:
-                error(f"Body {body['name']} in component {component['name']} does not have a 'path' attribute.")
-            elif not os.path.exists(body['path']):
-                error(f"File {body['path']} does not exist.")
-
             if 'suggested_name' not in body:
                 error(f"Body {body['name']} in component {component['name']} does not have a 'suggested_name' attribute.")
             elif os.path.basename(body.get('path', '')).lower() != os.path.basename(body['suggested_name']).lower():
@@ -206,26 +222,85 @@ def match_with_files(data:list, folder:str, base_material:str, accent_material:s
     ##    ##  ##       ##    ## ##     ## ##          ##    
     ##     ## ########  ######   #######  ########    ##    
 
-    # todo: components that are print in place, must be exported as a single file
-    # todo: instead of path, a hash based on component and body name must be used
-    # todo: rotate exported stls so that the normal is facing down (0,0,1)
-    #       todo: is openscad or stl_transform the best way to do this?
+    # TODO: rotate exported stls so that the normal is facing down (0,0,1)
+    #       TODO: is openscad or stl_transform the best way to do this?
     result = {}
-    for component in [x for x in data if len(x['bodies']) > 0]:
+    for component in printable:
         for body in component['bodies']:
-            if not body.get('path', '') in result:
-                result[body.get('path', '')] = []
+            key = str2hash(body.get('path', '')) + ".json"
+
+            def vector_to_rotation_deg(vec):
+                # vec: [x, y, z], normal vector to rotate to [0, 0, -1]
+                # Only use standard library, no numpy
+                target = [0, 0, -1]
+                v = list(vec)
+                v_norm = math.sqrt(sum(x*x for x in v))
+                if v_norm == 0:
+                    return [0, 0, 0]
+                v = [x / v_norm for x in v]
+                dot = sum(v[i]*target[i] for i in range(3))
+                dot = max(min(dot, 1.0), -1.0)
+                if all(abs(v[i] - target[i]) < 1e-6 for i in range(3)):
+                    return [0, 0, 0]
+                if all(abs(v[i] + target[i]) < 1e-6 for i in range(3)):
+                    return [180, 0, 0]
+                axis = [
+                    v[1]*target[2] - v[2]*target[1],
+                    v[2]*target[0] - v[0]*target[2],
+                    v[0]*target[1] - v[1]*target[0]
+                ]
+                axis_norm = math.sqrt(sum(x*x for x in axis))
+                if axis_norm == 0:
+                    return [0, 0, 0]
+                axis = [x / axis_norm for x in axis]
+                angle = math.acos(dot)
+                angle_deg = math.degrees(angle)
+                # Euler conversion is non-trivial; fallback to axis-angle
+                return [round(axis[0]*angle_deg, 3), round(axis[1]*angle_deg, 3), round(axis[2]*angle_deg, 3)]
+
+            orientation = body['orientation'][0] if len(body['orientation']) > 0 else [0, 0, 1]
+            rotation = vector_to_rotation_deg(orientation)
+            
             item = { 
-                'body_id': body['id'],
-                'body_hash': body['hash'],
-                'body_name': body['name'],
-                'body_orientation': body['orientation'],
+                'stl': key.replace('.json', '.stl'),
+                'path': body.get('path', ''),
+                'bodies': [body['name']],
+                'body_hashes': [body['hash']],
+                'rotation': f"-rx {rotation[0]} -ry {rotation[1]} -rz {rotation[2]}",
                 'component_id': component['id'],
                 'component_name': component['name'],
                 'suggested_name': body['suggested_name'],
             }
             if len(body['fixes']) > 0:
                 item['fixes'] = body['fixes']
-            result[body.get('path', '')].append(item)
+
+            
+            if not key in result:
+                result[key] = item
+            elif item['component_id'] == result[key]['component_id'] and item['rotation'] == result[key]['rotation']:
+                result[key]['bodies'].append(body['name'])
+                result[key]['body_hashes'].append(body['hash'])
+            elif item['component_id'] != result[key]['component_id']:
+                sys.stderr.write(Term.red(f"Error: component_id mismatch\n- {item}\n- {result[key]}\n"))
+                sys.exit(1)
+            elif item['rotation'] != result[key]['rotation']:
+                sys.stderr.write(Term.red(f"Error: rotation mismatch\n- {item}\n- {result[key]}\n"))
+                sys.exit(1)
+            else:
+                sys.stderr.write(Term.red(f"Error: unknown error !!!\n"))
+                sys.exit(1)
 
     return result
+
+if __name__ == "__main__":
+    import json
+    from my_printer import pprint
+
+    Term.initialize("localhost", 5000)
+    baseFolder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    with open(os.path.join(baseFolder, 'obj', 'components.json'), "r") as f:
+        data = json.load(f)
+
+    result = match_with_files(data, folder=os.path.join(baseFolder, 'STLs'), base_material="ABS Plastic (Voron Black)", accent_material="ABS Plastic (Voron Red)")
+
+    pprint(result)

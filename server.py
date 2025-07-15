@@ -58,7 +58,7 @@ def object2json(obj, max_depth, depth=0):
     elif hasattr(obj, 'asDict') and callable(obj.asDict):
         result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}    
     elif hasattr(obj, '__iter__') and callable(obj.__iter__):
-        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}
+        result = {k: object2json(v, max_depth, depth+1) for k, v in obj} if depth < max_depth else {}
     else:
         result = {k: object2json(attribute2json(obj, k), max_depth, depth+1) for k in sorted(dir(obj), key=sort_attrs) if not k.startswith('_')}  if depth < max_depth else {}
 

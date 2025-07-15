@@ -9,6 +9,7 @@ import jmespath
 import cli
 from cli.methods import get, post, file
 from cli.match_with_files import match_with_files
+from cli.EvalHelper import EvalDict, EvalList 
 
 host = 'localhost'
 port = 5000
@@ -92,7 +93,13 @@ def main():
             result = jmespath.search(x, result)
 
     if args.eval:
-        result = eval(args.eval.replace("@", "__json__"), {'__json__': result, 'os': os})
+        if isinstance(result, dict):
+            helper = EvalDict(result)
+        elif isinstance(result, list):
+            helper = EvalList(result)
+        else:
+            helper = result
+        result = eval(args.eval.replace("@", "__json__"), {'__json__': helper, 'os': os})
 
         if isinstance(result, list) or isinstance(result, dict) or isinstance(result, str):
             pass

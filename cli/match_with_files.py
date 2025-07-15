@@ -222,8 +222,6 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
     ##    ##  ##       ##    ## ##     ## ##          ##    
     ##     ## ########  ######   #######  ########    ##    
 
-    # TODO: rotate exported stls so that the normal is facing down (0,0,1)
-    #       TODO: is openscad or stl_transform the best way to do this?
     result = {}
     for component in printable:
         for body in component['bodies']:
@@ -262,7 +260,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
             rotation = vector_to_rotation_deg(orientation)
             
             item = { 
-                'stl': key.replace('.json', '.stl'),
+                'id': key.replace('.json', ''),
                 'path': body.get('path', ''),
                 'bodies': [body['name']],
                 'body_hashes': [body['hash']],

@@ -30,13 +30,20 @@ def walk_project(dataProjects):
         yield from walk_folder(project.rootFolder)
 
 def handle(query, app) -> any:
-    if 'id' in query:
+    if 'active' in query:
+        return [file2dict(app.activeDocument.dataFile)]
+    elif 'id' in query:
         return file2dict(app.data.findFileById(query['id']))
     else:
-        return [item for item in walk_project(app.data.dataProjects)]
+        result = [item for item in walk_project(app.data.dataProjects)]
+    
+    if 'name' in query:
+        return [item for item in result if item['name'].lower() == query['name'].lower()]
+    else:
+        return result
 
 if __name__ == "__main__":
     import _client_
     _client_.test(__file__, { 
-        'id':'urn:adsk.wipprod:dm.lineage:m1GM3AuVSsGAUndgrxP6jw'
+        'active': 1
         })

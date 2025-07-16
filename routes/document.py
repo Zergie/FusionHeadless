@@ -5,6 +5,7 @@ This endpoint handles requests to open an existing design or activate it within 
 import asyncio
 
 def open(id, app, adsk) -> any:
+    id = id.strip()
     if app.activeDocument and app.activeDocument.dataFile and app.activeDocument.dataFile.id == id:
         return f"File is already active."
     
@@ -41,5 +42,5 @@ def handle(query:dict, app, adsk) -> any:
 
 if __name__ == "__main__":
     import _client_
-    _client_.test(__file__, { 'query' : {'open': 'urn:adsk.wipprod:dm.lineage:m1GM3AuVSsGAUndgrxP6jw'}})
+    _client_.test(__file__, {'open': 'urn:adsk.wipprod:dm.lineage:KdrfgN7NQyWufnPf5J3L0Q  '})
     # _client_.test(__file__, { 'query' : {'close': 'False'}})

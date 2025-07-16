@@ -55,6 +55,7 @@ def main():
     parser.add_argument('--base-material', type=str, help='Base material for matching files.')
     parser.add_argument('--accent-material', type=str, help='Accent material for matching files.')
 
+    parser.add_argument('--silent', "-s", action='store_true', help='Do not print the response to the console.')
     group = parser.add_mutually_exclusive_group()
     group.add_argument('--output', "-o", type=str, help='File path to save the response.')
     group.add_argument('--plain', action='store_true', help='Output plain text without formatting.')
@@ -69,7 +70,8 @@ def main():
     if args.accent_material and not args.match_with_files:
         parser.error("--accent-material requires --match-with-files to be specified.")
 
-    sys.addaudithook(cli.pprint_hook)
+    if not args.silent:
+        sys.addaudithook(cli.pprint_hook)
 
     data = {}
     if args.file and (args.get or args.post):
@@ -121,7 +123,8 @@ def main():
 
         for key, value in mapping.items():
             output(value, os.path.join(args.outdir, key), verbose=True)
-
+    elif args.silent:
+        pass
     elif args.plain:
         print(json.dumps(result))
     else:

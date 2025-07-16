@@ -149,6 +149,8 @@ Executes Python code in the Fusion 360 environment.
 Returns a list of all files in all projects.
 
 #### 🧠 Parameters:
+- `GET /files?active`: returns only the active document
+- `GET /files?id=<id>`: Returns a file by its ID.
 - `GET /files?name=<name>`: Returns only files with that name.
 
 ### `GET /parameter`
@@ -186,7 +188,7 @@ Exports the active document, component, or body to file.
 #### 🧠 Parameters:
 - `component`: optional, the name of the component to export (if not specified, exports the active document)
 - `body`: optional, the name of the body to export (if not specified, exports the entire component)
-- `format`: the format to export to (e.g., `stl`, `step`, `3mf`, `obj`)
+- `format`: the format to export to (e.g., `stl`, `step`, `f3d`, `3mf`, `obj`)
 
 ### `GET /status`
 Returns the status of FusionHeadless.

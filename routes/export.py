@@ -49,7 +49,9 @@ def handle(query:dict, app, adsk) -> any:
             if len(bodies_not_found) > 0:
                 raise Exception(f"Body(s) '{', '.join(bodies_not_found)}' not found in component '{design.name}'.")
 
-    if format == "step":
+    if format == "f3d":
+        exportOptions = exportMgr.createFusionArchiveExportOptions(path, design)
+    elif format == "step":
         exportOptions = exportMgr.createSTEPExportOptions(path, design)
     elif format == "stl":
         exportOptions = exportMgr.createSTLExportOptions(design, path)
@@ -68,4 +70,4 @@ def handle(query:dict, app, adsk) -> any:
 
 if __name__ == "__main__":
     from _client_ import *
-    test(__file__, { "format": "stl", "component" : "39577e79-7b3a-4454-a449-2262f04fadc5", "body": ["Body1"] }, output=f"C:\\GIT\\YAMMU\\obj\\{uuid.uuid4().hex}.stl", timeout=60)
+    test(__file__, { "format": "f3d"}, output=f"C:\\GIT\\GT2_Pulley\\GT2_Pulley.f3d", timeout=60)

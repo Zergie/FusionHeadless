@@ -156,6 +156,10 @@ Returns a list of all files in all projects.
 ### `GET /parameter`
 Returns a list of all parameters in the active document.
 
+#### 🧠 Parameters:
+- `<nothing>`: Without parameters, returns all available parameters.
+- `<name>=<value>`: Returns a specific parameter by name.
+
 ### `POST /parameter`
 Updates parameters in the active document.
 
@@ -171,6 +175,19 @@ Reloads the FusionHeadless add-in.
 
 ### `GET /render`
 Renders the current view or document and returns the image.
+
+#### 🧠 Parameters:
+- `quality`: `25` to `100` for rendering, `Shaded`, `ShadedWithHiddenEdges`, `ShadedWithVisibleEdgesOnly`, `Wireframe`, `WireframeWithHiddenEdges`, `WireframeWithVisibleEdgesOnly` for Screen Capture
+- `exposure`: optional, the camera exposure value for the render
+- `focalLength`: optional, the focal length for the camera
+- `height`: optional, the height of the rendered image
+- `hide`: optional, what bodies/components to hide in the render (e.g., `all` or `<body/component name>`)
+- `isAntiAliased`: optional, whether the Screen Capture should be anti-aliased (default is `true`, not available for rendering)
+- `isBackgroundTransparent`: optional, whether the background should be transparent (default is `false`)
+- `isolate`: optional, what bodies/components to isolate in the render
+- `show`: optional, what bodies/components to show in the render (e.g., `all` or `<body/component name>`)
+- `view`: optional, the camera view to use (e.g., `Home` or any custom named view)
+- `width`: optional, the width of the rendered image
 
 ### `POST /restart`
 Restarts the FusionHeadless server.

@@ -5,7 +5,7 @@ constructs an appropriate file path in the system's temporary directory, and use
 exportManager to export the selected item in the requested format (STEP or STL).
 """
 
-import os, tempfile, uuid, re
+import os, tempfile, uuid
 from _utils_ import BinaryResponse, setVisibility, Visibility
 
 def handle(query:dict, app, adsk) -> any:

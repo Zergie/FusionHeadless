@@ -1,17 +1,25 @@
 """
-Render an image of the current Fusion 360 viewport or a specified named view.
-This route handles rendering requests by generating a PNG image of the active viewport in Fusion 360,
-with support for different visual styles and rendering qualities. The rendered image is saved to a temporary
-file and returned as a binary response. The function supports options for image resolution, background
-transparency, anti-aliasing, and view selection (e.g., home, fit, or a named view). It ensures that the
-viewport's visual style and camera are restored after rendering.
+Render a PNG image of the current Fusion 360 viewport or a specified named view.
+
+This function processes rendering requests by generating a PNG image of the active viewport in Fusion 360.
+It supports various visual styles, rendering qualities, camera settings (including focal length), and visibility
+controls (show, hide, isolate). The rendered image is saved to a temporary file and returned as a binary response.
+Options include image resolution, background transparency, anti-aliasing, exposure, and view selection (home or named view).
+After rendering, the viewport's visual style, camera, and visibility settings are restored to their original state.
+
 Args:
-    query (dict): Dictionary containing rendering options such as 'quality', 'visualStyle', 'width', 'height',
-                  'isBackgroundTransparent', 'isAntiAliased', and 'view'.
+    query (dict): Rendering options such as 'quality', 'visualStyle', 'width', 'height',
+                  'isBackgroundTransparent', 'isAntiAliased', 'view', 'focalLength', 'exposure',
+                  and visibility controls ('show', 'hide', 'isolate').
     app: The Fusion 360 application object.
+    ui: The Fusion 360 user interface object.
+    adsk: The Fusion 360 API module.
+
 Returns:
     PngResponse: The rendered image as a PNG response.
+
 Raises:
+    ValueError: If the quality value is out of the allowed range.
     Exception: If rendering does not complete within the specified timeout.
 """
 
@@ -65,13 +73,6 @@ def handle(query:dict, app, ui, adsk) -> any:
     else:
         old['camera'] = setControlDefinition('ViewCameraCommand', query.get('camera', None), adsk, ui)
 
-    if 'view' in query:
-        if query['view'].lower() == 'home':
-            viewport.goHome()
-            viewport.fit()
-        else:
-            app.activeDocument.design.namedViews.itemByName(query['view']).apply()
-
     lookup = {
         'show': Visibility.SHOW,
         'hide': Visibility.HIDE,
@@ -85,9 +86,17 @@ def handle(query:dict, app, ui, adsk) -> any:
             elif isinstance(query[key], list):
                 for item in query[key]:
                     setVisibility(design, item, value)
+    
+    if 'view' in query:
+        if query['view'].lower() == 'home':
+            viewport.goHome()
+            viewport.fit()
+        else:
+            app.activeDocument.design.namedViews.itemByName(query['view']).apply()
 
     ui.activeSelections.clear()
     adsk.doEvents()
+
     if visualStyle is not None:    
         old['visibility'] = setControlDefinition('VisibilityOverrideCommand', False, adsk, ui)
         options = adsk.core.SaveImageFileOptions.create(path)

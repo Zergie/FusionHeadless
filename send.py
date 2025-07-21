@@ -1,9 +1,8 @@
 #!.venv/bin/python3
 # -*- coding: utf-8 -*-
 import argparse
-import json
-import os
-import sys
+import json, os, sys
+
 
 import jmespath
 import cli
@@ -48,7 +47,7 @@ def main():
     parser.add_argument('--file', "-f", action='append', type=argparse.FileType('r', encoding='utf-8'), help='Reads response/data from a file.')
     parser.add_argument('--data', "-d", type=str, help='JSON data to send with POST request.')
     parser.add_argument('--jmespath', "-j", action='append', help='JMESPath to extract data from the response.')
-    parser.add_argument('--eval', "-py", type=str, help='Python expression to evaluate on the response data. Use @ to access the response.')
+    parser.add_argument('--eval', "-py", action='append', help='Python expression to evaluate on the response data. Use @ to access the response.')
     parser.add_argument('--timeout', "-t", type=int, default=60, help='Timeout for the request in seconds.')
 
     parser.add_argument('--match-with-files', "-m", type=str, help='Find files in a folder and match them with the response.')
@@ -95,18 +94,19 @@ def main():
             result = jmespath.search(x, result)
 
     if args.eval:
-        if isinstance(result, dict):
-            helper = EvalDict(result)
-        elif isinstance(result, list):
-            helper = EvalList(result)
-        else:
-            helper = result
-        result = eval(args.eval.replace("@", "__json__"), {'__json__': helper, 'os': os})
+        for expr in args.eval:
+            if isinstance(result, dict):
+                helper = EvalDict(result)
+            elif isinstance(result, list):
+                helper = EvalList(result)
+            else:
+                helper = result
+            result = eval(expr.replace("@", "__json__"), {'__json__': helper, 'os': os})
 
-        if isinstance(result, list) or isinstance(result, dict) or isinstance(result, str):
-            pass
-        elif hasattr(result, '__iter__') and not isinstance(result, str):
-            result = list(result)
+            if isinstance(result, list) or isinstance(result, dict) or isinstance(result, str):
+                pass
+            elif hasattr(result, '__iter__') and not isinstance(result, str):
+                result = list(result)
 
     if args.match_with_files:
         result = match_with_files(result, args.match_with_files, args.base_material, args.accent_material)

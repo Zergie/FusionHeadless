@@ -5,7 +5,9 @@ constructs an appropriate file path in the system's temporary directory, and use
 exportManager to export the selected item in the requested format (STEP or STL).
 """
 
-import os, tempfile, uuid
+import os
+import tempfile
+import uuid
 from _utils_ import BinaryResponse, setVisibility, Visibility
 
 def handle(query:dict, app, adsk) -> any:
@@ -28,7 +30,7 @@ def handle(query:dict, app, adsk) -> any:
             design = items[0]
     else:
         design = app.activeProduct.rootComponent
-    
+
     if 'body' in query:
         bodies = query["body"] if isinstance(query["body"], list) else [query["body"]]
 
@@ -50,6 +52,8 @@ def handle(query:dict, app, adsk) -> any:
                 raise Exception(f"Body(s) '{', '.join(bodies_not_found)}' not found in component '{design.name}'.")
 
     if format == "f3d":
+        if len([occ for occ in design.allOccurrences if occ.isReferencedComponent]) > 0:
+            raise Exception("Cannot export f3d file with referenced components.")
         exportOptions = exportMgr.createFusionArchiveExportOptions(path, design)
     elif format == "step":
         exportOptions = exportMgr.createSTEPExportOptions(path, design)
@@ -70,4 +74,4 @@ def handle(query:dict, app, adsk) -> any:
 
 if __name__ == "__main__":
     from _client_ import *
-    test(__file__, { "format": "f3d"}, output=f"C:\\GIT\\GT2_Pulley\\GT2_Pulley.f3d", timeout=60)
+    test(__file__, { "format": "f3d"}, output="C:\\temp\\export.f3d", timeout=60)

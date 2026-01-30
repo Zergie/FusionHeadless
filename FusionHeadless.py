@@ -10,7 +10,7 @@ sys.path.insert(0, base_dir)
 
 try:
     import server
-except:
+except Exception:
     adsk.core.Application.get().userInterface.messageBox("Loading failed:\n" + traceback.format_exc())
 
 def import_module(path:str):
@@ -24,7 +24,7 @@ try:
     # import utils module early to keep it from colliding with the select
     # module needed by http.server
     import_module(os.path.join(base_dir, "routes", "_utils_.py"))
-except Exception as e:
+except Exception:
     adsk.core.Application.get().userInterface.messageBox("Loading modules failed:\n" + traceback.format_exc())
 
 app = None
@@ -39,18 +39,18 @@ class RestartHandler(adsk.core.CustomEventHandler):
 
         try:
             server.stop_server()
-        except Exception as e:
+        except Exception:
             adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())
 
         try:
             importlib.reload(server)
-        except Exception as e:
+        except Exception:
             adsk.core.Application.get().userInterface.messageBox("Error reloading server:\n" + traceback.format_exc())
 
         try:
             server_thread = threading.Thread(target=server.start_server, daemon=True)
             server_thread.start()
-        except Exception as e:
+        except Exception:
             adsk.core.Application.get().userInterface.messageBox("Restart failed:\n" + traceback.format_exc())
 
 def register_event_handler(event_id:str, on_event):
@@ -71,7 +71,7 @@ def run(context):
     try:
         server_thread = threading.Thread(target=server.start_server, daemon=True)
         server_thread.start()
-    except Exception as e:
+    except Exception:
         adsk.core.Application.get().userInterface.messageBox("Startup failed:\n" + traceback.format_exc())
 
 def stop(context):
@@ -79,5 +79,5 @@ def stop(context):
     if server_thread and server_thread.is_alive():
         try:
             server.stop_server()
-        except Exception as e:
+        except Exception:
             adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())

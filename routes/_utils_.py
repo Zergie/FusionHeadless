@@ -102,8 +102,8 @@ def setVisibility(design, filter:str, value:int) -> None:
                 match = re.match(r"^(?:(.+)( v\d+)|(.+))(:\d)$", occ.name)
                 if match:
                     name = match.group(1) or match.group(3)
-                    version = match.group(2) or None
-                    occurrence = match.group(4)
+                    # version = match.group(2) or None
+                    # occurrence = match.group(4)
 
                     if name == filter:
                         if value == Visibility.ISOLATE:

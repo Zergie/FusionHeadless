@@ -14,11 +14,13 @@ def get_handler(path:str):
 class FusionHeadlessModules:
     def __getattr__(self, file:str) -> types.ModuleType:
         key = f"FusionHeadless.{file}"
-        if not key in sys.modules:
+        if key not in sys.modules:
             base_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{file}.py")
             spec = importlib.util.spec_from_file_location(file, base_path)
             module = importlib.util.module_from_spec(spec)
+            sys.path.insert(0, os.path.dirname(base_path))
             spec.loader.exec_module(module)
+            sys.path.pop(0)
             sys.modules[key] = module
         return sys.modules[key]
 FusionHeadless = FusionHeadlessModules()

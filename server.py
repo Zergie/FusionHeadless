@@ -83,7 +83,7 @@ def attribute2json(body, attr) -> dict:
         return None
     try:
         return getattr(body, attr)
-    except:
+    except Exception:
         return None
 
 customEventArguments = {}
@@ -115,7 +115,7 @@ def handle_restart(path:str, app) -> any:
         try:
             importlib.reload(sys.modules[module])
             result[module] = "Reloaded"
-        except:
+        except Exception:
             del sys.modules[module]
             result[module] = "Removed"
 
@@ -157,7 +157,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
                     try:
                         importlib.reload(sys.modules[module])
                         arg.result[module] = "Reloaded"
-                    except:
+                    except Exception:
                         del sys.modules[module]
                         arg.result[module] = "Removed"
 
@@ -174,7 +174,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
                     arg.http_error = (404, f"Route {arg.path} not defined")
 
             arg.event.set()  # Signal that the code execution is complete
-        except Exception as e:
+        except Exception:
             if arg:
                 arg.result = None
                 arg.http_error = (500, traceback.format_exc())

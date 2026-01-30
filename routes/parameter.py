@@ -1,7 +1,6 @@
 """
 << short description >>
 """
-from _utils_ import log
 import re
 
 class GenericParameter:
@@ -90,13 +89,13 @@ def handle(query, app) -> any:
     design = app.activeProduct
 
     if len(query.keys()) == 0:
-        result = {x.name : x.expression for x in iter_parameters(design) if not x is None}
+        result = {x.name : x.expression for x in iter_parameters(design) if x is not None}
         # return [x.name for x in iter_parameters(design) if not x is None]
     else:
         result = {}
         keys = list(query.keys())
         for item in iter_parameters(design):
-            if not item is None and item.name in keys:
+            if item is not None and item.name in keys:
                 keys.remove(item.name)
 
                 item.expression = str(query[item.name])

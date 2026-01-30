@@ -144,12 +144,12 @@ def handle(query:dict, app, ui, adsk) -> any:
         render.isBackgroundTransparent = bool(query.get('isBackgroundTransparent', False))
         render.renderQuality = quality
 
-        frame = render.startLocalRender(path, camera)
+        render.startLocalRender(path, camera)
 
     try:
         asyncio.run(asyncio.wait_for(render_finished(path), timeout=180))
     except asyncio.TimeoutError:
-        raise Exception(f"Failed to render within 180 seconds.")
+        raise Exception("Failed to render within 180 seconds.")
 
     viewport.visualStyle = old['visualStyle']
     setControlDefinition('VisibilityOverrideCommand', old.get('visibility'), adsk, ui)
@@ -163,4 +163,4 @@ def handle(query:dict, app, ui, adsk) -> any:
 if __name__ == "__main__":
     import _client_
     # _client_.test(__file__, {"view": "MotionStudy_Latch", "isolate": "Direct Drive x4", "hide": "Filament Spools", "focalLength": 200, "quality": "ShadedWithVisibleEdgesOnly", "width": 400, "height": 400}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)
-    _client_.test(__file__, {'view': 'MotionStudy_Latch', 'isolate': 'Direct Drive x4', 'hide': "['Filament Spools', 'latch_a', 'latch_b', 'latch_mirror_a', 'latch_mirror_b']", 'focalLength': '200', 'quality': 'ShadedWithVisibleEdgesOnly', 'width': '400', 'height': '400'}, output=f"C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)
+    _client_.test(__file__, {'view': 'MotionStudy_Latch', 'isolate': 'Direct Drive x4', 'hide': "['Filament Spools', 'latch_a', 'latch_b', 'latch_mirror_a', 'latch_mirror_b']", 'focalLength': '200', 'quality': 'ShadedWithVisibleEdgesOnly', 'width': '400', 'height': '400'}, output="C:\\GIT\\YAMMU\\obj\\new.png", timeout=180)

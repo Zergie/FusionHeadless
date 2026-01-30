@@ -1,20 +1,22 @@
-import os, re, hashlib
+import os
+import re
+import hashlib
 from http.server import BaseHTTPRequestHandler
 
 
-########  ########  ######  ########   #######  ##    ##  ######  ########  ######  
-##     ## ##       ##    ## ##     ## ##     ## ###   ## ##    ## ##       ##    ## 
-##     ## ##       ##       ##     ## ##     ## ####  ## ##       ##       ##       
-########  ######    ######  ########  ##     ## ## ## ##  ######  ######    ######  
-##   ##   ##             ## ##        ##     ## ##  ####       ## ##             ## 
-##    ##  ##       ##    ## ##        ##     ## ##   ### ##    ## ##       ##    ## 
-##     ## ########  ######  ##         #######  ##    ##  ######  ########  ######  
+########  ########  ######  ########   #######  ##    ##  ######  ########  ######
+##     ## ##       ##    ## ##     ## ##     ## ###   ## ##    ## ##       ##    ##
+##     ## ##       ##       ##     ## ##     ## ####  ## ##       ##       ##
+########  ######    ######  ########  ##     ## ## ## ##  ######  ######    ######
+##   ##   ##             ## ##        ##     ## ##  ####       ## ##             ##
+##    ##  ##       ##    ## ##        ##     ## ##   ### ##    ## ##       ##    ##
+##     ## ########  ######  ##         #######  ##    ##  ######  ########  ######
 class HttpResponse:
     def __init__(self, status_code: int):
         self.status_code = status_code
         self.headers = { "Content-Type": "text/plain" }
         self.content = ""
-    
+
     def send_header(self, requestHandler: BaseHTTPRequestHandler):
         requestHandler.send_response(self.status_code)
         for k, v in self.headers.items():
@@ -33,7 +35,7 @@ class BinaryResponse(HttpResponse):
         super().__init__(200)
         self.headers["Content-Type"] = "application/octet-stream"
         self.content = data
-    
+
     def send_content(self, requestHandler: BaseHTTPRequestHandler):
         requestHandler.wfile.write(self.content)
 
@@ -42,18 +44,18 @@ class PngResponse(HttpResponse):
         super().__init__(200)
         self.headers["Content-Type"] = "image/png"
         self.content = data
-    
+
     def send_content(self, requestHandler: BaseHTTPRequestHandler):
         requestHandler.wfile.write(self.content)
 
 
-##     ## ######## ##       ########  ######## ########       ######## ##     ## ##    ##  ######  ######## ####  #######  ##    ##  ######  
-##     ## ##       ##       ##     ## ##       ##     ##      ##       ##     ## ###   ## ##    ##    ##     ##  ##     ## ###   ## ##    ## 
-##     ## ##       ##       ##     ## ##       ##     ##      ##       ##     ## ####  ## ##          ##     ##  ##     ## ####  ## ##       
-######### ######   ##       ########  ######   ########       ######   ##     ## ## ## ## ##          ##     ##  ##     ## ## ## ##  ######  
-##     ## ##       ##       ##        ##       ##   ##        ##       ##     ## ##  #### ##          ##     ##  ##     ## ##  ####       ## 
-##     ## ##       ##       ##        ##       ##    ##       ##       ##     ## ##   ### ##    ##    ##     ##  ##     ## ##   ### ##    ## 
-##     ## ######## ######## ##        ######## ##     ##      ##        #######  ##    ##  ######     ##    ####  #######  ##    ##  ######  
+##     ## ######## ##       ########  ######## ########       ######## ##     ## ##    ##  ######  ######## ####  #######  ##    ##  ######
+##     ## ##       ##       ##     ## ##       ##     ##      ##       ##     ## ###   ## ##    ##    ##     ##  ##     ## ###   ## ##    ##
+##     ## ##       ##       ##     ## ##       ##     ##      ##       ##     ## ####  ## ##          ##     ##  ##     ## ####  ## ##
+######### ######   ##       ########  ######   ########       ######   ##     ## ## ## ## ##          ##     ##  ##     ## ## ## ##  ######
+##     ## ##       ##       ##        ##       ##   ##        ##       ##     ## ##  #### ##          ##     ##  ##     ## ##  ####       ##
+##     ## ##       ##       ##        ##       ##    ##       ##       ##     ## ##   ### ##    ##    ##     ##  ##     ## ##   ### ##    ##
+##     ## ######## ######## ##        ######## ##     ##      ##        #######  ##    ##  ######     ##    ####  #######  ##    ##  ######
 
 def log(message:str, mode:str = 'a') -> None:
     path = os.path.join(os.path.dirname(__file__), "debug.log")
@@ -77,7 +79,7 @@ def get_allBodies(design):
 
     for body in design.rootComponent.bRepBodies:
             yield body
-    
+
     for occ in design.rootComponent.allOccurrences:
         for body in occ.component.bRepBodies:
             yield body
@@ -138,7 +140,7 @@ def body2dict(body, **kwargs) -> dict:
 
     def dict2hash(dict) -> str:
         return str2hash(str(dict))
-    
+
     def body2color(body) -> str:
         colors = [x for x in body.appearance.appearanceProperties if x.name == "Color"]
         if not colors or len(colors) == 0:
@@ -146,14 +148,14 @@ def body2dict(body, **kwargs) -> dict:
         if colors[0].value is None:
             return "00000000"
         return "%0.2X%0.2X%0.2XFF" % (colors[0].value.red, colors[0].value.green, colors[0].value.blue)
-    
+
     def round2(value, precision):
         v = round(value, precision)
         if v > -1/10**precision and v < 1/10**precision:
             return 0.0
         else:
             return v
-        
+
 
     result = {
         'id'          : str2hash("-".join((body.name, body.parentComponent.id))),
@@ -189,7 +191,7 @@ def setControlDefinition(item:str, value:bool|int|list|None, adsk, ui) -> list|N
 
     cmd = ui.commandDefinitions.itemById(item)
     listCntrl: adsk.core.ListControlDefinition = cmd.controlDefinition
-    
+
 
     if isinstance(value, list):
         old = [bool(listCntrl.listItems.item(i).isSelected) for i in range(listCntrl.listItems.count)]
@@ -203,5 +205,5 @@ def setControlDefinition(item:str, value:bool|int|list|None, adsk, ui) -> list|N
         old = [i for i in range(listCntrl.listItems.count) if listCntrl.listItems.item(i).isSelected]
         old = old[0] if len(old) == 1 else None
         listCntrl.listItems.item(value).isSelected = True
-        
+
     return old

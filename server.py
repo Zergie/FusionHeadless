@@ -56,7 +56,7 @@ def object2json(obj, max_depth, depth=0):
     elif hasattr(obj, 'asArray') and callable(obj.asArray):
         result = [object2json(v, max_depth, depth+1) for v in obj.asArray()] if depth < max_depth else []
     elif hasattr(obj, 'asDict') and callable(obj.asDict):
-        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}    
+        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}
     elif hasattr(obj, '__iter__') and callable(obj.__iter__):
         result = {k: object2json(v, max_depth, depth+1) for k, v in obj} if depth < max_depth else {}
     else:
@@ -75,7 +75,7 @@ def object2json(obj, max_depth, depth=0):
             'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
         })
         result = {k: v for k, v in result.items() if v is not None}
-    
+
     return result
 
 def attribute2json(body, attr) -> dict:
@@ -95,7 +95,7 @@ class CustomEventArgument:
         self.query = query
         self.context = context
         self.result = None
-        self.http_error = None 
+        self.http_error = None
 
     def __str__(self):
         return f"CustomEventArgument(uuid={self.uuid})"
@@ -106,7 +106,7 @@ class CustomEventArgument:
 def handle_restart(path:str, app) -> any:
     modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
     my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
-    
+
     result = {}
     for module in my_modules:
         if module == "server":
@@ -118,7 +118,7 @@ def handle_restart(path:str, app) -> any:
         except:
             del sys.modules[module]
             result[module] = "Removed"
-    
+
     if path == "/restart":
         result["server"] = "Restarting.."
         app.fireCustomEvent('FusionHeadless.Restart')
@@ -148,7 +148,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
                 # restart and reload are low-level operations so a running server can be recovered
                 modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
                 my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
-                
+
                 arg.result = {}
                 for module in my_modules:
                     if module == "server":
@@ -160,7 +160,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
                     except:
                         del sys.modules[module]
                         arg.result[module] = "Removed"
-                
+
                 if arg.path == "/restart":
                     arg.result["server"] = "Restarting.."
                     app.fireCustomEvent('FusionHeadless.Restart')
@@ -172,7 +172,7 @@ class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
                     arg.result = handler(**kwargs)
                 else:
                     arg.http_error = (404, f"Route {arg.path} not defined")
-                
+
             arg.event.set()  # Signal that the code execution is complete
         except Exception as e:
             if arg:

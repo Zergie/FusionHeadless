@@ -26,12 +26,11 @@ Raises:
 import asyncio
 import math
 import os
-import re
 import tempfile
 import uuid
-from _utils_ import PngResponse, setControlDefinition, get_allBodies, setVisibility, Visibility
+from _utils_ import PngResponse, setControlDefinition, setVisibility, Visibility
 
-    
+
 def handle(query:dict, app, ui, adsk) -> any:
     path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4().hex}.png")
     if os.path.exists(path):
@@ -61,7 +60,7 @@ def handle(query:dict, app, ui, adsk) -> any:
     # validate settings
     if quality is not None and not (25 <= quality <= 100):
         raise ValueError("Quality must be between 25 and 100, or a valid visual style must be specified.")
-    
+
     if 'focalLength' in query:
         old['camera'] = setControlDefinition('ViewCameraCommand', 1, adsk, ui)
         camera = viewport.camera
@@ -86,7 +85,7 @@ def handle(query:dict, app, ui, adsk) -> any:
             elif isinstance(query[key], list):
                 for item in query[key]:
                     setVisibility(design, item, value)
-    
+
     if 'view' in query:
         if query['view'].lower() == 'home':
             viewport.goHome()
@@ -97,14 +96,14 @@ def handle(query:dict, app, ui, adsk) -> any:
     ui.activeSelections.clear()
     adsk.doEvents()
 
-    if visualStyle is not None:    
+    if visualStyle is not None:
         old['visibility'] = setControlDefinition('VisibilityOverrideCommand', False, adsk, ui)
         options = adsk.core.SaveImageFileOptions.create(path)
         options.width = int(query.get('width', 1280))
         options.height = int(query.get('height', 1024))
         options.isBackgroundTransparent = bool(query.get('isBackgroundTransparent', False))
         options.isAntiAliased = bool(query.get('isAntiAliased', True))
-        viewport.saveAsImageFileWithOptions(options) 
+        viewport.saveAsImageFileWithOptions(options)
 
     elif quality is not None:
         camera = viewport.camera
@@ -120,7 +119,7 @@ def handle(query:dict, app, ui, adsk) -> any:
         # distance_multiplier = (1.0 / fov) / 2.1227368058100704
         # direction.scaleBy(distance * .45 * distance_multiplier)
         direction.scaleBy(distance * .455)
-        
+
         eye = camera.target.copy()
         eye.translateBy(direction)
 
@@ -146,12 +145,12 @@ def handle(query:dict, app, ui, adsk) -> any:
         render.renderQuality = quality
 
         frame = render.startLocalRender(path, camera)
-    
+
     try:
         asyncio.run(asyncio.wait_for(render_finished(path), timeout=180))
     except asyncio.TimeoutError:
         raise Exception(f"Failed to render within 180 seconds.")
-    
+
     viewport.visualStyle = old['visualStyle']
     setControlDefinition('VisibilityOverrideCommand', old.get('visibility'), adsk, ui)
     setControlDefinition('ViewCameraCommand', old.get('camera'), adsk, ui)

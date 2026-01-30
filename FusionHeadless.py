@@ -7,11 +7,25 @@ import traceback
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, base_dir)
-sys.path.insert(0, os.path.join(base_dir, "routes"))
+
 try:
     import server
 except:
     adsk.core.Application.get().userInterface.messageBox("Loading failed:\n" + traceback.format_exc())
+
+def import_module(path:str):
+    name = os.path.splitext(os.path.basename(path))[0]
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    sys.modules[name] = module
+
+try:
+    # import utils module early to keep it from colliding with the select
+    # module needed by http.server
+    import_module(os.path.join(base_dir, "routes", "_utils_.py"))
+except Exception as e:
+    adsk.core.Application.get().userInterface.messageBox("Loading modules failed:\n" + traceback.format_exc())
 
 app = None
 handlers = []
@@ -22,12 +36,12 @@ class RestartHandler(adsk.core.CustomEventHandler):
         super().__init__()
     def notify(self, args):
         global server_thread
-        
+
         try:
             server.stop_server()
         except Exception as e:
             adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())
-        
+
         try:
             importlib.reload(server)
         except Exception as e:

@@ -9,11 +9,11 @@ class GenericParameter:
         self.name = name
         self.parent = parent
         self.property = prop
-    
+
     @property
     def expression(self):
         return getattr(self.parent, self.property)
-    
+
     @expression.setter
     def expression(self, value):
         prop_type = type(self.expression)
@@ -31,7 +31,7 @@ class GenericParameter:
                     value = prop_type(value)
                 except Exception:
                     pass
-        
+
         try:
             limits = getattr(self.parent, f"{self.property[:-5]}Limits", None)
             if limits.minimumValue == limits.maximumValue:
@@ -79,7 +79,7 @@ def sort_result(x):
     m = re.match(r"^d(\d+)", x[0])
     if m:
         return (2, int(m.group(1)))
-    
+
     m = re.match(r"^([^\d]+)(\d+)", x[0])
     if m:
         return (1, m.group(1), int(m.group(2)))
@@ -101,7 +101,7 @@ def handle(query, app) -> any:
 
                 item.expression = str(query[item.name])
                 result[item.name] = item.expression
-            
+
             if len(keys) == 0:
                 break
         for key in keys:

@@ -27,7 +27,7 @@ def handle(query:dict, app, adsk) -> any:
         if len(items) == 0:
             raise Exception(f"Component '{query['component']}' not found.")
         else:
-            design = items[0]
+            design = items[0].component
     else:
         design = app.activeProduct.rootComponent
 
@@ -52,8 +52,8 @@ def handle(query:dict, app, adsk) -> any:
                 raise Exception(f"Body(s) '{', '.join(bodies_not_found)}' not found in component '{design.name}'.")
 
     if format == "f3d":
-        if len([occ for occ in design.allOccurrences if occ.isReferencedComponent]) > 0:
-            raise Exception("Cannot export f3d file with referenced components.")
+        # if len([occ for occ in design.allOccurrences if occ.isReferencedComponent]) > 0:
+        #     raise Exception("Cannot export f3d file with referenced components.")
         exportOptions = exportMgr.createFusionArchiveExportOptions(path, design)
     elif format == "step":
         exportOptions = exportMgr.createSTEPExportOptions(path, design)
@@ -74,4 +74,5 @@ def handle(query:dict, app, adsk) -> any:
 
 if __name__ == "__main__":
     from _client_ import *
-    test(__file__, { "format": "f3d"}, output="C:\\temp\\export.f3d", timeout=60)
+    #test(__file__, { "format": "step", "component": "cfd_model"}, timeout=60)
+    test(__file__, { "format": "step", "component": "cfd_model"}, output=r"C:\Users\user\Downloads\Tiny Heater.step", timeout=60)

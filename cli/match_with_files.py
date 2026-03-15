@@ -13,13 +13,13 @@ class FileItem:
 
     def __repr__(self):
         return f"FileItem(name={self.name}, path={self.path})"
-    
+
     def _get_compare_key(self, name, path=None):
         if path is None:
             path = ""
         else:
             path = "/".join(path.split(os.sep)[-2:-1]).lower() + "/"
-        
+
         name = name.replace(' ', '_').lower()
         if name.endswith('.stl'):
             name = name[:-4]
@@ -31,7 +31,7 @@ class FileItem:
             compare_key = self._get_compare_key(value.name)
         elif isinstance(value, str):
             compare_key = self._get_compare_key(value)
-        
+
         if "/" in compare_key:
             return compare_key == self._get_compare_key(self.name, self.path)
         else:
@@ -45,12 +45,12 @@ errors = []
 warnings = []
 def error(message):
     global errors
-    if not message in errors:
+    if message not in errors:
         errors.append(message)
 
 def warning(message):
     global warnings
-    if not message in warnings:
+    if message not in warnings:
         warnings.append(message)
 
 class Materials:
@@ -62,7 +62,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
     warnings = []
     Materials.base_material = base_material
     Materials.accent_material = accent_material
-    
+
     if not os.path.exists(folder):
         raise FileNotFoundError(f"Folder '{folder}' does not exist.")
 
@@ -89,7 +89,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
         else:
             result += c_name
             result = f"{b_name}/{result}"
-        
+
         if count > 1:
             result += f"_x{count}"
         return f"{result}.stl"
@@ -103,6 +103,8 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
     suggested_names = {}
     printable = []
     for component in data.values():
+        if re.search(" \(\d\)$", component['name']):
+            continue
         component_url = Term.url(component['name'], '/select', id=component['id'])
         if 'name' not in component:
             raise ValueError(f"{component_url} does not have a 'name' attribute.")
@@ -118,7 +120,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
                 raise ValueError(f"{body_url} does not have a 'name' attribute.")
             if 'material' not in body:
                 raise ValueError(f"{body_url} does not have a 'material' attribute.")
-            
+
             if body['material'] not in [Materials.base_material, Materials.accent_material]:
                 body['is_printed'] = False
                 continue
@@ -128,7 +130,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
             if 'orientation' in body and len(body['orientation']) > 1:
                 error(f"{body_url} has more than one orientation.")
                 body['is_printed'] = False
-            
+
             name = get_name(component['name'], body['name'], component['count'], body['material'])
             matches = [fileItem for fileItem in fileItems if fileItem == name]
             suggested_names[name] = 0 if name not in suggested_names else suggested_names[name] + 1
@@ -145,14 +147,14 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
                 name =  get_name(body['name'], body['name'], component['count'], body['material'])
                 names.append(name)
                 matches = [fileItem for fileItem in fileItems if fileItem == name]
-                
+
             if len(matches) == 0:
                 warning(f"No matching file found for {body_url} - {body['name']} -> {name}")
                 name = get_name(component['name'], body['name'], component['count'], body['material'])
                 fileItem = FileItem(folder, name)
                 fileItems.append(fileItem)
                 matches = [fileItem]
-            
+
             if len(matches) == 1:
                 fileItem = matches[0]
                 # if component['id'] in [x['id'] for x in fileItem.assigned]:
@@ -163,7 +165,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
                 #     body['path'] = fileItem.path
                 fileItem.assigned.append(component)
                 body['path'] = fileItem.path
-                    
+
             else:
                 m = "\n".join([f"- {match.path}" for match in matches])
                 error(f"Multiple matching files found for {body_url} - {body['name']} -> {names}:\n{m}")
@@ -198,13 +200,13 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
     for name in [x for x in suggested_names if suggested_names[x] > 1]:
         error(f"File name {name} is suggested for multiple components. Please rename the part to avoid conflicts.")
 
-    ######## ########  ########   #######  ########   ######          ###    ##    ## ########       ##      ##    ###    ########  ##    ## #### ##    ##  ######    ######  
-    ##       ##     ## ##     ## ##     ## ##     ## ##    ##        ## ##   ###   ## ##     ##      ##  ##  ##   ## ##   ##     ## ###   ##  ##  ###   ## ##    ##  ##    ## 
-    ##       ##     ## ##     ## ##     ## ##     ## ##             ##   ##  ####  ## ##     ##      ##  ##  ##  ##   ##  ##     ## ####  ##  ##  ####  ## ##        ##       
-    ######   ########  ########  ##     ## ########   ######       ##     ## ## ## ## ##     ##      ##  ##  ## ##     ## ########  ## ## ##  ##  ## ## ## ##   ####  ######  
-    ##       ##   ##   ##   ##   ##     ## ##   ##         ##      ######### ##  #### ##     ##      ##  ##  ## ######### ##   ##   ##  ####  ##  ##  #### ##    ##        ## 
-    ##       ##    ##  ##    ##  ##     ## ##    ##  ##    ##      ##     ## ##   ### ##     ##      ##  ##  ## ##     ## ##    ##  ##   ###  ##  ##   ### ##    ##  ##    ## 
-    ######## ##     ## ##     ##  #######  ##     ##  ######       ##     ## ##    ## ########        ###  ###  ##     ## ##     ## ##    ## #### ##    ##  ######    ######  
+    ######## ########  ########   #######  ########   ######          ###    ##    ## ########       ##      ##    ###    ########  ##    ## #### ##    ##  ######    ######
+    ##       ##     ## ##     ## ##     ## ##     ## ##    ##        ## ##   ###   ## ##     ##      ##  ##  ##   ## ##   ##     ## ###   ##  ##  ###   ## ##    ##  ##    ##
+    ##       ##     ## ##     ## ##     ## ##     ## ##             ##   ##  ####  ## ##     ##      ##  ##  ##  ##   ##  ##     ## ####  ##  ##  ####  ## ##        ##
+    ######   ########  ########  ##     ## ########   ######       ##     ## ## ## ## ##     ##      ##  ##  ## ##     ## ########  ## ## ##  ##  ## ## ## ##   ####  ######
+    ##       ##   ##   ##   ##   ##     ## ##   ##         ##      ######### ##  #### ##     ##      ##  ##  ## ######### ##   ##   ##  ####  ##  ##  #### ##    ##        ##
+    ##       ##    ##  ##    ##  ##     ## ##    ##  ##    ##      ##     ## ##   ### ##     ##      ##  ##  ## ##     ## ##    ##  ##   ###  ##  ##   ### ##    ##  ##    ##
+    ######## ##     ## ##     ##  #######  ##     ##  ######       ##     ## ##    ## ########        ###  ###  ##     ## ##     ## ##    ## #### ##    ##  ######    ######
 
     for item in warnings:
         sys.stderr.write(Term.yellow(f"Warning: {item}\n"))
@@ -214,13 +216,13 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
 
 
 
-    ########  ########  ######  ##     ## ##       ######## 
-    ##     ## ##       ##    ## ##     ## ##          ##    
-    ##     ## ##       ##       ##     ## ##          ##    
-    ########  ######    ######  ##     ## ##          ##    
-    ##   ##   ##             ## ##     ## ##          ##    
-    ##    ##  ##       ##    ## ##     ## ##          ##    
-    ##     ## ########  ######   #######  ########    ##    
+    ########  ########  ######  ##     ## ##       ########
+    ##     ## ##       ##    ## ##     ## ##          ##
+    ##     ## ##       ##       ##     ## ##          ##
+    ########  ######    ######  ##     ## ##          ##
+    ##   ##   ##             ## ##     ## ##          ##
+    ##    ##  ##       ##    ## ##     ## ##          ##
+    ##     ## ########  ######   #######  ########    ##
 
     result = {}
     for component in printable:
@@ -258,8 +260,8 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
 
             orientation = body['orientation'][0] if len(body['orientation']) > 0 else [0, 0, 1]
             rotation = vector_to_rotation_deg(orientation)
-            
-            item = { 
+
+            item = {
                 'id': key.replace('.json', ''),
                 'path': body.get('path', ''),
                 'bodies': [body['name']],
@@ -272,8 +274,8 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
             if len(body['fixes']) > 0:
                 item['fixes'] = body['fixes']
 
-            
-            if not key in result:
+
+            if key not in result:
                 result[key] = item
             elif item['component_id'] == result[key]['component_id'] and item['rotation'] == result[key]['rotation']:
                 result[key]['bodies'].append(body['name'])
@@ -285,7 +287,7 @@ def match_with_files(data:dict, folder:str, base_material:str, accent_material:s
                 sys.stderr.write(Term.red(f"Error: rotation mismatch\n- {item}\n- {result[key]}\n"))
                 sys.exit(1)
             else:
-                sys.stderr.write(Term.red(f"Error: unknown error !!!\n"))
+                sys.stderr.write(Term.red("Error: unknown error !!!\n"))
                 sys.exit(1)
 
     return result

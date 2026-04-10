@@ -7,23 +7,24 @@ Ideal for automation, testing, and headless control of your Fusion instance from
 ## 🚀 Features
 - Exposes Fusion 360's full Python API over HTTP
 - Supports `eval()` for expressions and `exec()` for full scripts
+- Exposes an MCP-compatible JSON-RPC endpoint at `POST /mcp` for tool discovery and calls
 - Automatically injects `app` and `adsk` into the global context
 - Runs locally on `http://localhost:5000`
 - Designed for internal/local use — **not intended for public deployment**
 
 
 ## ⚠️ Warning
-This add-in executes raw Python code via REST — it is **inherently unsafe**.  
+This add-in executes raw Python code via REST — it is **inherently unsafe**.
 Only use it on **trusted machines** and restrict access to `localhost`.
 
 
 ## 📦 Installation
 1. Locate your Fusion 360 **Add-ins folder**:
 
-   - Windows:  
+   - Windows:
      `%APPDATA%\Autodesk\Autodesk Fusion 360\API\AddIns\`
-     
-   - macOS:  
+
+   - macOS:
      `~/Library/Application Support/Autodesk/Autodesk Fusion 360/API/AddIns/`
 
 2. Clone or download this repo into that folder:
@@ -89,6 +90,30 @@ result = sk.name
 }
 ```
 
+### `POST /mcp`
+Exposes MCP-compatible JSON-RPC 2.0 endpoint for MCP clients (for example VS Code MCP integrations).
+
+Current MCP tools include:
+- `list_open_documents`: Lists open top-level Fusion documents and marks the active one.
+- `get_api_documentation`: Searches Fusion API classes, members, and docstrings in `adsk`.
+- `search_components`: Finds and counts matching components/occurrences by name (plain text or regex).
+
+#### ⚙️ VS Code MCP configuration example
+Add the following to your VS Code MCP configuration file (for example `.vscode/mcp.json`) to register FusionHeadless:
+
+```json
+{
+  "servers": {
+    "fusionheadless": {
+      "type": "http",
+      "url": "http://localhost:5000/mcp"
+    }
+  }
+}
+```
+
+After saving, refresh MCP servers in VS Code and use `tools/list` to confirm the server is reachable.
+
 
 ## 💡 Tips
 - automatically injects into the global context:
@@ -112,7 +137,7 @@ Note on wsl: If you are using WSL, you might want to setup `Mirrored Mode WSL2 N
 
 
 ## 🔐 Security
-This server runs arbitrary code in your Fusion 360 session.  
+This server runs arbitrary code in your Fusion 360 session.
 Make sure:
 - You run it only on localhost
 - You don’t expose it via port forwarding or firewalls
@@ -144,6 +169,14 @@ Executes Python code in the Fusion 360 environment.
 #### 🧠 Parameters:
 - `code`: the Python code to execute (as a string)
 - `depth`: optional, the maximum recursion depth for object serialization
+
+### `POST /mcp`
+MCP-compatible JSON-RPC 2.0 endpoint for tool discovery and execution.
+
+#### 🧠 Notes:
+- Use `tools/list` to discover available tools.
+- Use `tools/call` to run a tool with arguments.
+- Tool names are filename-derived from `routes/mcp/*.py`.
 
 ### `GET /files`
 Returns a list of all files in all projects.

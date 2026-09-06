@@ -3,9 +3,9 @@
   "type": "addin",
   "id": "FusionHeadless",
   "name": "FusionHeadless",
-  "description": "Expose Fusion 360 API over HTTP via eval/exec for headless scripting.",
+  "description": "Expose Fusion 360 automation through a local HTTP service.",
   "author": "https://github.com/Zergie",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "runOnStartup": true,
   "entry": "FusionHeadless.py"
 }

@@ -1,250 +1,418 @@
-from datetime import datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
-import adsk.core # type: ignore
-import importlib
-import json
+"""Child-owned HTTP service and startup/ownership protocol."""
+
+from __future__ import annotations
+
+import argparse
+import inspect
 import os
-import routes
+from pathlib import Path
+import socket
 import sys
 import threading
-import traceback
-import uuid
+import time
+from typing import Annotated, Any, Callable
+
+from fastapi import BackgroundTasks, Body, FastAPI, Query
+from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
+import uvicorn
+from pydantic import BaseModel, create_model, Field
+
+from bridge import FramedConnection
+from context import registry
+from extension_state import extension_fingerprint
+from fusion_invocation import FusionOperationInvoker
+import fusion_routes
+from mcp_tools import PROTOCOL_VERSION, call_tool, tool_inventory
+from process_conversation import (ConversationResult, ProcessConversation,
+                                  RemoteConversationError)
+from routing import RouteDefinition, route_definitions, route_parameters
+from versioning import manifest_version
 
 
-startup_time = datetime.now()
-app = None
-ui = None
-def get_context(additional={}):
-    global app, ui, startup_time
-    if app is None:
-        app = adsk.core.Application.get()
-    if ui is None:
-        ui = app.userInterface
-    context = {
-        "adsk" : adsk,
-        "app"  : app,
-        "os"   : os,
-        "sys"  : sys,
-        "ui"   : ui,
-        "status": {
-            "startup_time": startup_time,
-            "routes": sorted(["/eval", "/exec", "/restart", "/reload"] + [x for x in routes.routes.keys()])
-        }
-    }
-    context.update(additional)
-    return context
+APP_VERSION = manifest_version()
+app = FastAPI(title="FusionHeadless", version=APP_VERSION)
+_startup_time = time.monotonic()
 
-def sort_attrs(item):
-    order = ["id", "name", "description"]
-    if item in order:
-        return f"{order.index(item):02d}_{item}"
-    else:
-        return f"{len(order):02d}_{item}"
 
-def object2json(obj, max_depth, depth=0):
-    if type(obj).__name__ in ['method', 'function', 'NoneType']:
-        result = None
-    elif isinstance(obj, (int, float, str, bool)):
-        result = obj
-    elif obj is None:
-        result = None
-    elif isinstance(obj, (list, tuple)):
-        result = [object2json(x, max_depth, depth+1) for x in obj] if depth < max_depth else []
-    elif isinstance(obj, dict):
-        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.items()} if depth < max_depth else {}
-    elif hasattr(obj, 'asArray') and callable(obj.asArray):
-        result = [object2json(v, max_depth, depth+1) for v in obj.asArray()] if depth < max_depth else []
-    elif hasattr(obj, 'asDict') and callable(obj.asDict):
-        result = {k: object2json(v, max_depth, depth+1) for k, v in obj.asDict().items()} if depth < max_depth else {}
-    elif hasattr(obj, '__iter__') and callable(obj.__iter__):
-        result = {k: object2json(v, max_depth, depth+1) for k, v in obj} if depth < max_depth else {}
-    else:
-        result = {k: object2json(attribute2json(obj, k), max_depth, depth+1) for k in sorted(dir(obj), key=sort_attrs) if not k.startswith('_')}  if depth < max_depth else {}
+class ServerRuntime:
+    """Own this child's connection, HTTP resources, and replacement lifecycle."""
 
-    # Check if the object's type is a built-in type
-    if isinstance(type(obj), type) and type(obj).__module__ == 'builtins':
-        pass
-    elif isinstance(result, (list, tuple)):
-        result = {
-            'items': [x for x in result if x is not None],
-            'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
-        }
-    elif isinstance(result, dict):
-        result.update({
-            'objectType': f"https://help.autodesk.com/view/fusion360/ENU/?cg=Developer%27s%20Documentation&query={type(obj).__name__}%20Object",
-        })
-        result = {k: v for k, v in result.items() if v is not None}
+    def __init__(self, application: FastAPI, conversation: ProcessConversation | None = None) -> None:
+        self.application = application
+        self._conversation = conversation
+        self._restart_in_progress = threading.Event()
+        self._http_server: uvicorn.Server | None = None
+        self._listener: socket.socket | None = None
+        self._thread: threading.Thread | None = None
+        self._lockfile = Path(os.getenv("TEMP") or "/tmp") / "FusionHeadless.lock"
+        self._owns_lock = False
 
-    return result
+    @property
+    def restarting(self) -> bool:
+        return self._restart_in_progress.is_set()
 
-def attribute2json(body, attr) -> dict:
-    if attr in ['this', 'objectType']: # ignore these attributes
-        return None
-    try:
-        return getattr(body, attr)
-    except Exception:
-        return None
-
-customEventArguments = {}
-class CustomEventArgument:
-    def __init__(self, path, query, context):
-        self.uuid = str(uuid.uuid4())
-        self.event = threading.Event()
-        self.path = path
-        self.query = query
-        self.context = context
-        self.result = None
-        self.http_error = None
-
-    def __str__(self):
-        return f"CustomEventArgument(uuid={self.uuid})"
-
-    def __repr__(self):
-        return self.__str__()
-
-def handle_restart(path:str, app) -> any:
-    modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
-    my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
-
-    result = {}
-    for module in my_modules:
-        if module == "server":
-            continue
-
+    def execute_fusion(self, code: str) -> Any:
+        if self._conversation is None:
+            raise RuntimeError("Fusion bridge is not connected")
         try:
-            importlib.reload(sys.modules[module])
-            result[module] = "Reloaded"
-        except Exception:
-            del sys.modules[module]
-            result[module] = "Removed"
+            return self._conversation.execute_fusion(code)
+        except RemoteConversationError as error:
+            if error.error_type == "SyntaxError":
+                raise SyntaxError(str(error)) from error
+            raise
 
-    if path == "/restart":
-        result["server"] = "Restarting.."
-        app.fireCustomEvent('FusionHeadless.Restart')
-    return result
-
-class ExecOnUiThreadHandler(adsk.core.CustomEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        global ui, customEventArguments
-        arg = None
+    def request_restart(self, *, show_terminal: bool = False) -> None:
+        self._restart_in_progress.set()
         try:
-            arg = customEventArguments.get(args.additionalInfo, None)
-            if not arg:
-                return  # If the argument is not found, do nothing
-            elif arg.path == "/eval" or arg.path == "/exec":
-                # evaluate or execute are low-level operations so a running server can be recovered
-                if arg.path == "/eval":
-                    arg.result = eval(arg.query.get("code", ""), arg.context)
-                elif arg.path == "/exec":
-                    exec(arg.query.get("code", ""), arg.context)
-                    arg.result = arg.context.get("result", None)
+            if self._conversation is None:
+                raise RuntimeError("Fusion bridge is not connected")
+            self._conversation.restart("restart", show_terminal=show_terminal)
+        except Exception as error:
+            if not (isinstance(error, RemoteConversationError)
+                    and error.error_type == "FusionResetError"):
+                self._restart_in_progress.clear()
+            raise
 
-                if "depth" in arg.query:
-                    arg.result = object2json(arg.result, max_depth=int(arg.query["depth"]))
-            elif arg.path == "/restart" or arg.path == "/reload":
-                # restart and reload are low-level operations so a running server can be recovered
-                modules = {x: getattr(sys.modules.get(x), '__file__', None) for x in sorted(sys.modules)}
-                my_modules = {k: v for k, v in modules.items() if v is not None and "FusionHeadless" in v}
+    def complete_restart(self) -> None:
+        """Called after the HTTP response; stop the actual owned HTTP server."""
+        if self._http_server is not None:
+            self._http_server.should_exit = True
+        if self._conversation is not None:
+            try:
+                self._conversation.close("requested replacement")
+            except (BrokenPipeError, OSError):
+                pass
 
-                arg.result = {}
-                for module in my_modules:
-                    if module == "server":
-                        continue
-
-                    try:
-                        importlib.reload(sys.modules[module])
-                        arg.result[module] = "Reloaded"
-                    except Exception:
-                        del sys.modules[module]
-                        arg.result[module] = "Removed"
-
-                if arg.path == "/restart":
-                    arg.result["server"] = "Restarting.."
-                    app.fireCustomEvent('FusionHeadless.Restart')
-            else:
-                handler = routes.get_handler(arg.path)
-                if handler:
-                    args = handler.__code__.co_varnames[:handler.__code__.co_argcount]
-                    kwargs = {k: v for k, v in arg.context.items() if k in args}
-                    arg.result = handler(**kwargs)
+    def run(self, port: int) -> int:
+        bridge_input = os.fdopen(os.dup(sys.stdin.fileno()), "rb")
+        if os.name == "nt":
+            # Native-library initialization can inspect stdin and block behind
+            # a pipe read. Keep the bridge on its own descriptor on Windows.
+            with open(os.devnull, "rb") as null_input:
+                os.dup2(null_input.fileno(), sys.stdin.fileno())
+        bridge = FramedConnection(bridge_input, sys.stdout.buffer)
+        self._conversation = ProcessConversation(bridge)
+        self._restart_in_progress.clear()
+        reader_started = False
+        try:
+            try:
+                # Port ownership is authoritative; write the lock only after binding.
+                self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self._listener.bind(("127.0.0.1", port))
+                self._listener.listen()
+                self._listener.setblocking(False)
+            except OSError as error:
+                if self._lockfile.exists():
+                    bridge.write({"command": "quit", "reason": "port already owned"})
                 else:
-                    arg.http_error = (404, f"Route {arg.path} not defined")
+                    notification = f"FusionHeadless could not bind localhost:{port}: {error}"
+                    bridge.write({"command": "exec",
+                                  "code": f"if ui is not None:\n    ui.messageBox({notification!r})"})
+                    bridge.write({"command": "quit", "reason": "port unavailable"})
+                return 0
 
-            arg.event.set()  # Signal that the code execution is complete
-        except Exception:
-            if arg:
-                arg.result = None
-                arg.http_error = (500, traceback.format_exc())
-                arg.event.set()  # Signal that the code execution is complete
-            elif ui:
-                ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
-            adsk.autoTerminate(False)
+            self._lockfile.parent.mkdir(parents=True, exist_ok=True)
+            self._lockfile.write_text(str(os.getpid()), encoding="utf-8")
+            self._owns_lock = True
+            config = uvicorn.Config(self.application, log_config=None, access_log=False)
+            self._http_server = uvicorn.Server(config)
+            self._thread = threading.Thread(
+                target=self._http_server.run, kwargs={"sockets": [self._listener]}, daemon=True,
+            )
+            self._thread.start()
+            bridge.write({"command": "ready", "fingerprint": extension_fingerprint()})
+            reader_started = True
+            self._conversation.serve_forever(_handle_server_command)
+            reader_started = False
+            return 0
+        finally:
+            if self._http_server is not None:
+                self._http_server.should_exit = True
+            if self._thread is not None:
+                self._thread.join(timeout=5)
+            if self._listener is not None:
+                self._listener.close()
+            if self._owns_lock:
+                try:
+                    self._lockfile.unlink()
+                except FileNotFoundError:
+                    pass
+            # A fatal handler failure can leave a blocked reader. Let process
+            # exit release that descriptor instead of blocking while closing it.
+            if not reader_started:
+                bridge_input.close()
+            self._conversation = None
+            self._http_server = None
+            self._listener = None
+            self._thread = None
+            self._owns_lock = False
 
-class RequestHandler(BaseHTTPRequestHandler):
-    def _do_ANY(self, request):
-        global app, customEventArguments
-        parsed_url = urlparse(self.path)
-        path = parsed_url.path
-        query = {k: v[0] if len(v) == 1 else v for k, v in parse_qs(parsed_url.query).items()}
-        query.update(request)  # Merge query parameters with request body
-        context = get_context({ "path": path, "query": query, "request": request })
 
-        arg = CustomEventArgument(path, query, context)
-        customEventArguments[arg.uuid] = arg
-        app.fireCustomEvent('FusionHeadless.ExecOnUiThread', arg.uuid)
-        arg.event.wait()  # Wait for the event to be set by the custom event handler
-        del customEventArguments[arg.uuid]  # Clean up after we're done
+_runtime = ServerRuntime(app)
 
-        if arg.http_error:
-            self.send_response(arg.http_error[0])
-            message = arg.http_error[1]
-            if isinstance(message, str):
-                self.send_header("Content-Type", "text/plain")
-                self.end_headers()
-                self.wfile.write(message.encode())
-            else:
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps(message).encode())
-            self.send_error(arg.http_error[0], arg.http_error[1])
-        elif hasattr(arg.result, 'send') and callable(getattr(arg.result, 'send')):
-            arg.result.send(self)
+
+class RestartRequest(BaseModel):
+    """Options controlling the replacement child process."""
+
+    show_terminal: bool = Field(
+        default=False,
+        description="Launch the replacement child with a visible Windows terminal.",
+    )
+
+
+def _status_unavailable(error: Exception) -> JSONResponse:
+    """Return the stable public response for an unavailable Fusion status."""
+    return JSONResponse(
+        {
+            "status": "error",
+            "error": "Fusion status unavailable",
+            "exception": str(error),
+        },
+        status_code=503,
+    )
+
+
+@app.middleware("http")
+async def reject_requests_during_restart(request: Any, call_next: Callable[..., Any]) -> Any:
+    """Fail closed once a replacement has been accepted by Fusion."""
+    if _runtime.restarting:
+        return JSONResponse(
+            {"status": "error", "error": "Restart in progress"},
+            status_code=503,
+            headers={"Retry-After": "1"},
+        )
+    return await call_next(request)
+
+
+@app.get("/status")
+def status() -> Any:
+    try:
+        details = _invoke_fusion_operation(fusion_routes.fusion_status, {})
+    except Exception as error:
+        return _status_unavailable(error)
+    result = {
+        **details,
+        "status": "Server is running",
+        "uptime": _uptime(),
+        "routes": sorted(
+            {route.path for route in app.routes if isinstance(route, APIRoute)}
+        ),
+    }
+    return {"status": "ok", "result": result}
+
+
+def _uptime() -> str:
+    seconds = int(time.monotonic() - _startup_time)
+    if seconds >= 86400:
+        return f"{seconds // 86400} days, {(seconds % 86400) // 3600} hours, {(seconds % 3600) // 60} minutes"
+    elif seconds >= 3600:
+        return f"{seconds // 3600} hours, {(seconds % 3600) // 60} minutes"
+    elif seconds >= 60:
+        return f"{seconds // 60} minutes, {seconds % 60} seconds"
+    else:
+        return f"{seconds} seconds"
+
+
+def _invoke_fusion_operation(operation: Callable[..., Any], query: dict[str, Any]) -> Any:
+    """Invoke one registered Fusion operation through the child-side seam."""
+    return FusionOperationInvoker(_fusion_call).invoke(operation, query)
+
+
+def _model_values(value: Any) -> dict[str, Any]:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(exclude_unset=True)
+    return value.dict(exclude_unset=True)
+
+
+def _request_model(definition: RouteDefinition) -> type[Any]:
+    fields = {}
+    for parameter in route_parameters(definition.operation):
+        default = ... if parameter.required else parameter.default
+        fields[parameter.name] = (
+            parameter.annotation,
+            Field(default, description=parameter.description),
+        )
+    return create_model(f"{definition.operation.__name__}Request", **fields)
+
+
+def _route_handler(definition: RouteDefinition, method: str) -> Callable[..., Any]:
+    parameters = route_parameters(definition.operation)
+    request_model = _request_model(definition) if method == "POST" else None
+
+    async def handle(**values: Any) -> Any:
+        if request_model is None:
+            arguments = values
         else:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "result": arg.result
-            }).encode())
-
-    def do_GET(self):
-        return self._do_ANY({})
-
-    def do_POST(self):
-        length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(length)
+            body = values["body"]
+            arguments = _model_values(body)
         try:
-            request = json.loads(body)
-        except json.JSONDecodeError:
-            request = {}
+            result = _invoke_fusion_operation(definition.operation, arguments)
+            if definition.binary is not None:
+                if not isinstance(result, bytes):
+                    raise RuntimeError("Fusion binary route returned a non-binary response")
+                payload = result
+                return Response(payload, media_type=definition.binary.media_type,
+                                headers=definition.binary.headers(arguments))
+            return {"status": "ok", "result": result}
+        except Exception as error:
+            return JSONResponse({"status": "error", "error": str(error)}, status_code=500)
 
-        return self._do_ANY(request)
+    handle.__name__ = f"{definition.operation.__name__}_{method.lower()}"
+    handle.__doc__ = definition.operation.__doc__
+    if request_model is None:
+        exposed = [] if len(definition.methods) > 1 else [
+            inspect.Parameter(
+                parameter.name,
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=parameter.annotation,
+                default=Query(
+                    ... if parameter.required else parameter.default,
+                    description=parameter.description,
+                ),
+            )
+            for parameter in parameters
+        ]
+    else:
+        exposed = [inspect.Parameter(
+            "body",
+            inspect.Parameter.KEYWORD_ONLY,
+            annotation=request_model,
+            default=Body(...),
+        )]
+    handle.__signature__ = inspect.Signature(exposed)  # type: ignore[attr-defined]
+    setattr(handle, "__fusionheadless_route__", definition)
+    return handle
 
-server:ThreadingHTTPServer = None
-def start_server(port=5000):
-    global server
-    server = ThreadingHTTPServer(("localhost", port), RequestHandler)
-    print(f"[FusionHeadless] Listening on port {port}")
-    server.serve_forever()
 
-def stop_server():
-    global server
-    if server:
-        print("[FusionHeadless] Stopping server...")
-        server.shutdown()
-        server.server_close()
-        print("[FusionHeadless] Server stopped.")
+for definition in route_definitions():
+    for method in definition.methods:
+        route_options: dict[str, Any] = {}
+        if definition.binary is not None:
+            route_options = {
+                "response_class": Response,
+                "responses": {
+                    200: {
+                        "description": "Successful binary response",
+                        "content": {
+                            definition.binary.media_type: {
+                                "schema": {"type": "string", "format": "binary"}
+                            }
+                        },
+                        "headers": {
+                            "Content-Disposition": {
+                                "description": "Suggested output filename.",
+                                "schema": {"type": "string"},
+                            }
+                        },
+                    }
+                },
+            }
+        app.add_api_route(
+            definition.path,
+            _route_handler(definition, method),
+            methods=[method],
+            summary=(definition.operation.__doc__ or definition.operation.__name__)
+            .strip().splitlines()[0],
+            **route_options,
+        )
+
+
+@app.post("/restart")
+async def restart(
+    background: BackgroundTasks,
+    options: Annotated[RestartRequest, Body()] = RestartRequest(),
+) -> Any:
+    try:
+        _runtime.request_restart(show_terminal=options.show_terminal)
+        return {"status": "ok", "result": {"server": "Restarting.."}}
+    except Exception as error:
+        return JSONResponse({"status": "error", "error": str(error)}, status_code=500)
+    finally:
+        if _runtime.restarting:
+            background.add_task(_runtime.complete_restart)
+
+
+def _fusion_call(code: str) -> Any:
+    """Execution seam shared by HTTP, MCP, and registered server callbacks."""
+    return _runtime.execute_fusion(code)
+
+
+@app.post("/exec")
+async def execute(
+    code: Annotated[
+        str,
+        Body(embed=True, description="Python function body to execute in Fusion."),
+    ],
+) -> Any:
+    try:
+        return _fusion_call(code)
+    except Exception as error:
+        status = 400 if isinstance(error, SyntaxError) else 500
+        return JSONResponse({"error": str(error)}, status_code=status)
+
+
+@app.post("/mcp")
+async def mcp(query: Annotated[dict[str, Any], Body(description="JSON-RPC request")]) -> Any:
+    rpc_id = query.get("id")
+    method = query.get("method")
+    params = query.get("params") or {}
+    if method is not None and not isinstance(method, str):
+        return JSONResponse({"jsonrpc": "2.0", "id": rpc_id,
+                              "error": {"code": -32600, "message": "Invalid Request"}})
+    if method and method.startswith("notifications/"):
+        return JSONResponse({})
+    elif method == "initialize":
+        result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}},
+                  "serverInfo": {"name": "FusionHeadless", "version": APP_VERSION}}
+        return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+    elif method == "ping":
+        return {"jsonrpc": "2.0", "id": rpc_id, "result": {}}
+    elif method == "tools/list":
+        return {"jsonrpc": "2.0", "id": rpc_id, "result": {"tools": tool_inventory()}}
+    elif method == "tools/call":
+        if not isinstance(params, dict):
+            return {"jsonrpc": "2.0", "id": rpc_id,
+                    "error": {"code": -32602, "message": "Invalid params"}}
+        try:
+            result = call_tool(
+                params.get("name"), params.get("arguments") or {},
+                FusionOperationInvoker(_fusion_call),
+            )
+            return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+        except Exception as error:
+            return {"jsonrpc": "2.0", "id": rpc_id,
+                    "error": {"code": -32603, "message": str(error)}}
+    elif method:
+        return {"jsonrpc": "2.0", "id": rpc_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"}}
+    else:
+        return {"jsonrpc": "2.0", "id": rpc_id,
+                "error": {"code": -32600, "message": "Invalid Request"}}
+
+
+def _handle_server_command(message: dict[str, Any]) -> ConversationResult:
+    """Serve one inbound command while the adapter is in Fusion code."""
+    if message.get("command") == "quit":
+        return ConversationResult(close=True)
+    if message.get("command") != "call":
+        raise RuntimeError(f"unexpected server command: {message!r}")
+    name = message.get("name")
+    definition = registry.server.get(name)
+    if definition is None:
+        raise RuntimeError(f"unregistered server definition: {name!r}")
+    return ConversationResult(
+        definition.value(*message.get("args", []), **message.get("kwargs", {}))
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=5000)
+    args = parser.parse_args()
+    return _runtime.run(args.port)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

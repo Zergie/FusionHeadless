@@ -1,306 +1,192 @@
+#!/usr/bin/env python3
+"""Prepare local STL export manifests from FusionHeadless component JSON."""
+
+from __future__ import annotations
+
+import argparse
 import hashlib
+import json
+import math
 import os
+from pathlib import Path
 import re
 import sys
-from term import Term
-import math
+from typing import Any
 
-class FileItem:
-    def __init__(self, root, name):
-        self.name = name
-        self.path = os.path.join(root, name)
-        self.assigned = []
-
-    def __repr__(self):
-        return f"FileItem(name={self.name}, path={self.path})"
-
-    def _get_compare_key(self, name, path=None):
-        if path is None:
-            path = ""
-        else:
-            path = "/".join(path.split(os.sep)[-2:-1]).lower() + "/"
-
-        name = name.replace(' ', '_').lower()
-        if name.endswith('.stl'):
-            name = name[:-4]
-        compare_key = path + "_".join([x for x in name.split('_') if not x.startswith('x') and x != '[a]']) + ".stl"
-        return compare_key
-
-    def __eq__(self, value):
-        if isinstance(value, FileItem):
-            compare_key = self._get_compare_key(value.name)
-        elif isinstance(value, str):
-            compare_key = self._get_compare_key(value)
-
-        if "/" in compare_key:
-            return compare_key == self._get_compare_key(self.name, self.path)
-        else:
-            return compare_key == self._get_compare_key(self.name)
 
 def str2hash(string: str) -> str:
-    hash = hashlib.md5(string.encode()).hexdigest()
-    return f"{hash[:8]}-{hash[8:12]}-{hash[12:16]}-{hash[16:20]}-{hash[20:]}"
+    """Keep the legacy path-based manifest identifiers."""
+    digest = hashlib.md5(string.encode()).hexdigest()
+    return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:]}"
 
-errors = []
-warnings = []
-def error(message):
-    global errors
-    if message not in errors:
-        errors.append(message)
 
-def warning(message):
-    global warnings
-    if message not in warnings:
-        warnings.append(message)
+def _compare_key(name: str) -> str:
+    name = name.replace(" ", "_").lower()
+    if name.endswith(".stl"):
+        name = name[:-4]
+    return "_".join(part for part in name.split("_")
+                    if part != "[a]" and not re.fullmatch(r"x\d+", part)) + ".stl"
 
-class Materials:
-    base_material = None
-    accent_material = None
-def match_with_files(data:dict, folder:str, base_material:str, accent_material:str) -> dict:
-    global errors, warnings
-    errors = []
-    warnings = []
-    Materials.base_material = base_material
-    Materials.accent_material = accent_material
 
-    if not os.path.exists(folder):
-        raise FileNotFoundError(f"Folder '{folder}' does not exist.")
+def _suggested_name(component: dict, body: dict, accent_material: str) -> str:
+    def clean(name: str) -> str:
+        return re.sub(r"(^\[a\]_|_x\d+( \(\d+\))?$|( \(\d+\))$)", "", name).replace(" ", "_").lower()
 
+    component_name, body_name = clean(component["name"]), clean(body["name"])
+    name = ("[a]_" if body["material"] == accent_material else "") + component_name
+    if body_name != component_name and not body_name.startswith("body"):
+        name = f"{body_name}/{name}"
+    if component["count"] > 1:
+        name += f"_x{component['count']}"
+    name += ".stl"
+    if Path(name).is_absolute() or ".." in name.replace("\\", "/").split("/"):
+        raise ValueError(f"Invalid STL output name: {name!r}")
+    return name
+
+
+def _rotation(orientations: Any, label: str) -> str:
+    if not isinstance(orientations, (list, tuple)) or len(orientations) != 1:
+        raise ValueError(f"{label}: expected exactly one Build Plate orientation")
+    vector = orientations[0]
+    if not isinstance(vector, (list, tuple)) or len(vector) != 3:
+        raise ValueError(f"{label}: orientation must have three coordinates")
+    try:
+        x, y, z = (float(value) for value in vector)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label}: invalid orientation {vector!r}") from error
+    if not all(math.isfinite(value) for value in (x, y, z)) or math.hypot(x, y, z) == 0:
+        raise ValueError(f"{label}: orientation must be finite and nonzero")
+    # Sequential X then Y rotations send the build-plate normal to -Z.
+    # Axis-angle components are not Euler angles for oblique normals.
+    radius = math.hypot(y, z)
+    rx = math.degrees(math.atan2(y, z)) + 180 if radius else 0.0
+    if rx > 180:
+        rx -= 360
+    ry = math.degrees(math.atan2(x, radius))
+    rx, ry = (f"{round(value, 6) or 0:.6f}".rstrip("0").rstrip(".")
+              for value in (rx, ry))
+    return f"-rx {rx} -ry {ry} -rz 0"
+
+
+def match_with_files(data: dict, folder: str, base_material: str, accent_material: str) -> dict:
+    """Match printed bodies to local paths without changing input or STL files.
+
+    Return the legacy mapping of UUID.json names to export records. Invalid
+    orientations, ambiguous matches and incompatible grouped bodies fail before
+    any output is written. Naming and unused-file diagnostics go to stderr.
+    """
     if not isinstance(data, dict):
-        raise TypeError("Data must be a dictionary with component names as keys.")
-
-    def clean_name(name):
-        result = re.sub(r'(^\[a\]_|_x\d+( \(\d+\))?$|( \(\d+\))$)', '', name).lower()
-        result = result.replace(' ', '_').lower()
-        return result
-
-    def get_name(component, body, count, material) -> str:
-        if material == Materials.base_material:
-            result = ""
-        elif material == Materials.accent_material:
-            result = "[a]_"
-        else:
-            return "/* unknown material */"
-
-        c_name = clean_name(component)
-        b_name = clean_name(body)
-        if b_name == c_name or b_name.startswith("body"):
-            result += c_name
-        else:
-            result += c_name
-            result = f"{b_name}/{result}"
-
-        if count > 1:
-            result += f"_x{count}"
-        return f"{result}.stl"
-
-    fileItems = []
-    for root, _, files in os.walk(folder):
-        for name in files:
-            if name.lower().endswith('.stl'):
-                fileItems.append(FileItem(root=root, name=name))
-
-    suggested_names = {}
-    printable = []
+        raise ValueError("Components must be a JSON object keyed by component ID")
+    if not os.path.isdir(folder):
+        raise ValueError(f"STL folder does not exist: {folder}")
+    if not base_material or not accent_material or base_material == accent_material:
+        raise ValueError("Base and accent materials must be distinct nonempty names")
+    paths = []
+    for root, directories, files in os.walk(folder):
+        directories.sort()
+        paths.extend(os.path.join(root, name) for name in sorted(files)
+                     if name.lower().endswith(".stl"))
+    existing_paths = set(paths)
+    assigned: set[str] = set()
+    result: dict[str, Any] = {}
     for component in data.values():
-        if re.search(" \(\d\)$", component['name']):
+        if not isinstance(component, dict) or not all(
+            key in component for key in ("id", "name", "count", "bodies")
+        ):
+            raise ValueError("Each component requires id, name, count and bodies")
+        if re.search(r" \(\d+\)$", component["name"]):
             continue
-        component_url = Term.url(component['name'], '/select', id=component['id'])
-        if 'name' not in component:
-            raise ValueError(f"{component_url} does not have a 'name' attribute.")
-        if 'bodies' not in component:
-            raise ValueError(f"{component_url} does not have a 'bodies' attribute.")
-        component['is_printed'] = True
-
-        for body in component['bodies']:
-            body_url = Term.url(component['name'] + ' - ' + body['name'], '/select', id=component['id'])
-            if 'id' not in body:
-                raise ValueError(f"{body_url} does not have an 'id' attribute.")
-            if 'name' not in body:
-                raise ValueError(f"{body_url} does not have a 'name' attribute.")
-            if 'material' not in body:
-                raise ValueError(f"{body_url} does not have a 'material' attribute.")
-
-            if body['material'] not in [Materials.base_material, Materials.accent_material]:
-                body['is_printed'] = False
+        for body in component["bodies"]:
+            label = f"Component {component['name']!r}, body {body.get('name')!r}"
+            if "material" not in body:
+                raise ValueError(f"{label}: missing material")
+            if body["material"] not in (base_material, accent_material):
                 continue
-            if 'orientation' not in body or len(body['orientation']) == 0:
-                error(f"{body_url} does not have an 'orientation'.")
-                body['is_printed'] = False
-            if 'orientation' in body and len(body['orientation']) > 1:
-                error(f"{body_url} has more than one orientation.")
-                body['is_printed'] = False
-
-            name = get_name(component['name'], body['name'], component['count'], body['material'])
-            matches = [fileItem for fileItem in fileItems if fileItem == name]
-            suggested_names[name] = 0 if name not in suggested_names else suggested_names[name] + 1
-            body['suggested_name'] = name
-            body['fixes'] = []
-            names = [name]
-
-            if len(matches) == 0 and "/" in name:
-                name = name.split("/")[-1]
-                names.append(name)
-                matches = [fileItem for fileItem in fileItems if fileItem == name]
-
-            if len(matches) == 0:
-                name =  get_name(body['name'], body['name'], component['count'], body['material'])
-                names.append(name)
-                matches = [fileItem for fileItem in fileItems if fileItem == name]
-
-            if len(matches) == 0:
-                warning(f"No matching file found for {body_url} - {body['name']} -> {name}")
-                name = get_name(component['name'], body['name'], component['count'], body['material'])
-                fileItem = FileItem(folder, name)
-                fileItems.append(fileItem)
-                matches = [fileItem]
-
-            if len(matches) == 1:
-                fileItem = matches[0]
-                # if component['id'] in [x['id'] for x in fileItem.assigned]:
-                #     for key in list(body.keys()):
-                #         del body[key]
-                # else:
-                #     fileItem.assigned.append(component)
-                #     body['path'] = fileItem.path
-                fileItem.assigned.append(component)
-                body['path'] = fileItem.path
-
+            for key in ("id", "name", "hash"):
+                if key not in body:
+                    raise ValueError(f"{label}: missing {key}")
+            rotation = _rotation(body.get("orientation"), label)
+            suggested = _suggested_name(component, body, accent_material)
+            fallback = _suggested_name({**component, "name": body["name"]}, body, accent_material)
+            candidates = (suggested, suggested.rsplit("/", 1)[-1], fallback)
+            matches = []
+            for candidate in candidates:
+                parent, _, filename = candidate.rpartition("/")
+                matches = [path for path in paths
+                           if _compare_key(os.path.basename(path)) == _compare_key(filename)
+                           and (not parent or os.path.basename(os.path.dirname(path)).lower() == parent)]
+                if matches:
+                    break
+            if len(matches) > 1:
+                raise ValueError(f"{label}: multiple matching STL files: {matches}")
+            elif matches:
+                path = matches[0]
             else:
-                m = "\n".join([f"- {match.path}" for match in matches])
-                error(f"Multiple matching files found for {body_url} - {body['name']} -> {names}:\n{m}")
-
-            component['bodies'] = [b for b in component['bodies'] if 'id' in b]
-
-        printable_bodies = [x for x in component['bodies'] if x.get('is_printed', True)]
-        if len(printable_bodies) > 0:
-            printable.append(component)
-            printable[-1].update({
-                'bodies': printable_bodies,
-            })
-
-    for fileItem in [x for x in fileItems if len(x.assigned) > 1]:
-        assigned = ", ".join([Term.url(x["name"], "/select", id=x["id"]) for x in fileItem.assigned])
-        warning(f"File {fileItem.path} is already assigned multiple times: {assigned}")
-
-    for fileItem in [x for x in fileItems if len(x.assigned) == 0]:
-        warning(f"File {fileItem.path} was not assigned to any component.")
-
-    for component in printable:
-        for body in component['bodies']:
-            if 'suggested_name' not in body:
-                error(f"Body {body['name']} in component {component['name']} does not have a 'suggested_name' attribute.")
-            elif os.path.basename(body.get('path', '')).lower() != os.path.basename(body['suggested_name']).lower():
-                url = Term.url(os.path.basename(body['suggested_name']), "/select", id=component['id'])
-                warning(f"Suggested name {url} does not match file name {os.path.basename(body.get('path', ''))}.")
-                path = os.path.abspath(body.get('path', ''))
-                new_path = os.path.join(os.path.dirname(path), os.path.basename(body['suggested_name']))
-                body['fixes'].append(f"mv \"{path}\" \"{new_path}\"")
-
-    for name in [x for x in suggested_names if suggested_names[x] > 1]:
-        error(f"File name {name} is suggested for multiple components. Please rename the part to avoid conflicts.")
-
-    ######## ########  ########   #######  ########   ######          ###    ##    ## ########       ##      ##    ###    ########  ##    ## #### ##    ##  ######    ######
-    ##       ##     ## ##     ## ##     ## ##     ## ##    ##        ## ##   ###   ## ##     ##      ##  ##  ##   ## ##   ##     ## ###   ##  ##  ###   ## ##    ##  ##    ##
-    ##       ##     ## ##     ## ##     ## ##     ## ##             ##   ##  ####  ## ##     ##      ##  ##  ##  ##   ##  ##     ## ####  ##  ##  ####  ## ##        ##
-    ######   ########  ########  ##     ## ########   ######       ##     ## ## ## ## ##     ##      ##  ##  ## ##     ## ########  ## ## ##  ##  ## ## ## ##   ####  ######
-    ##       ##   ##   ##   ##   ##     ## ##   ##         ##      ######### ##  #### ##     ##      ##  ##  ## ######### ##   ##   ##  ####  ##  ##  #### ##    ##        ##
-    ##       ##    ##  ##    ##  ##     ## ##    ##  ##    ##      ##     ## ##   ### ##     ##      ##  ##  ## ##     ## ##    ##  ##   ###  ##  ##   ### ##    ##  ##    ##
-    ######## ##     ## ##     ##  #######  ##     ##  ######       ##     ## ##    ## ########        ###  ###  ##     ## ##     ## ##    ## #### ##    ##  ######    ######
-
-    for item in warnings:
-        sys.stderr.write(Term.yellow(f"Warning: {item}\n"))
-    for item in errors:
-        sys.stderr.write(Term.red(f"Error: {item}\n"))
-    sys.stderr.write("\nSummary: " + Term.green(f"{len(data)} processed") + ", " + Term.yellow(f"{len(warnings)} warnings") + ", " + Term.red(f"{len(errors)} errors") + ".\n")
-
-
-
-    ########  ########  ######  ##     ## ##       ########
-    ##     ## ##       ##    ## ##     ## ##          ##
-    ##     ## ##       ##       ##     ## ##          ##
-    ########  ######    ######  ##     ## ##          ##
-    ##   ##   ##             ## ##     ## ##          ##
-    ##    ##  ##       ##    ## ##     ## ##          ##
-    ##     ## ########  ######   #######  ########    ##
-
-    result = {}
-    for component in printable:
-        for body in component['bodies']:
-            key = str2hash(body.get('path', '')) + ".json"
-
-            def vector_to_rotation_deg(vec):
-                # vec: [x, y, z], normal vector to rotate to [0, 0, -1]
-                # Only use standard library, no numpy
-                target = [0, 0, -1]
-                v = list(vec)
-                v_norm = math.sqrt(sum(x*x for x in v))
-                if v_norm == 0:
-                    return [0, 0, 0]
-                v = [x / v_norm for x in v]
-                dot = sum(v[i]*target[i] for i in range(3))
-                dot = max(min(dot, 1.0), -1.0)
-                if all(abs(v[i] - target[i]) < 1e-6 for i in range(3)):
-                    return [0, 0, 0]
-                if all(abs(v[i] + target[i]) < 1e-6 for i in range(3)):
-                    return [180, 0, 0]
-                axis = [
-                    v[1]*target[2] - v[2]*target[1],
-                    v[2]*target[0] - v[0]*target[2],
-                    v[0]*target[1] - v[1]*target[0]
-                ]
-                axis_norm = math.sqrt(sum(x*x for x in axis))
-                if axis_norm == 0:
-                    return [0, 0, 0]
-                axis = [x / axis_norm for x in axis]
-                angle = math.acos(dot)
-                angle_deg = math.degrees(angle)
-                # Euler conversion is non-trivial; fallback to axis-angle
-                return [round(axis[0]*angle_deg, 3), round(axis[1]*angle_deg, 3), round(axis[2]*angle_deg, 3)]
-
-            orientation = body['orientation'][0] if len(body['orientation']) > 0 else [0, 0, 1]
-            rotation = vector_to_rotation_deg(orientation)
-
+                path = os.path.join(folder, suggested)
+                paths.append(path)
+                print(f"Warning: {label}: no existing STL; using {path}", file=sys.stderr)
+            assigned.add(path)
+            key = str2hash(path) + ".json"
             item = {
-                'id': key.replace('.json', ''),
-                'path': body.get('path', ''),
-                'bodies': [body['name']],
-                'body_hashes': [body['hash']],
-                'rotation': f"-rx {rotation[0]} -ry {rotation[1]} -rz {rotation[2]}",
-                'component_id': component['id'],
-                'component_name': component['name'],
-                'suggested_name': body['suggested_name'],
+                "id": key[:-5], "path": path, "bodies": [body["name"]],
+                "body_hashes": [body["hash"]], "rotation": rotation,
+                "component_id": component["id"], "component_name": component["name"],
+                "suggested_name": suggested,
             }
-            if len(body['fixes']) > 0:
-                item['fixes'] = body['fixes']
-
-
-            if key not in result:
-                result[key] = item
-            elif item['component_id'] == result[key]['component_id'] and item['rotation'] == result[key]['rotation']:
-                result[key]['bodies'].append(body['name'])
-                result[key]['body_hashes'].append(body['hash'])
-            elif item['component_id'] != result[key]['component_id']:
-                sys.stderr.write(Term.red(f"Error: component_id mismatch\n- {item}\n- {result[key]}\n"))
-                sys.exit(1)
-            elif item['rotation'] != result[key]['rotation']:
-                sys.stderr.write(Term.red(f"Error: rotation mismatch\n- {item}\n- {result[key]}\n"))
-                sys.exit(1)
+            if key in result:
+                previous = result[key]
+                if previous["component_id"] != item["component_id"]:
+                    raise ValueError(f"{path}: matched different components {previous['component_name']!r} and {component['name']!r}")
+                if previous["rotation"] != rotation:
+                    raise ValueError(f"{label}: bodies sharing {path} have different orientations")
+                if previous["suggested_name"] != suggested:
+                    raise ValueError(f"{label}: bodies sharing {path} have different suggested names or materials")
+                previous["bodies"].append(body["name"])
+                previous["body_hashes"].append(body["hash"])
             else:
-                sys.stderr.write(Term.red("Error: unknown error !!!\n"))
-                sys.exit(1)
-
+                result[key] = item
+            if os.path.basename(path).lower() != suggested.rsplit("/", 1)[-1]:
+                print(f"Warning: {path}: suggested name is {suggested}", file=sys.stderr)
+    for path in sorted(existing_paths - assigned):
+        print(f"Warning: STL is not assigned to a printed body: {path}", file=sys.stderr)
     return result
 
+
+def _write_json(path: Path, value: Any) -> None:
+    content = json.dumps(value, indent=2, ensure_ascii=False) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") == content:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def main(arguments: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--file", "-f", required=True, help="Component JSON file, or '-' for stdin.")
+    parser.add_argument("--match-with-files", "--folder", dest="folder", required=True, help="Existing STL tree to match.")
+    parser.add_argument("--base-material", required=True)
+    parser.add_argument("--accent-material", required=True)
+    parser.add_argument("--output", "-o", help="Write the combined manifest here.")
+    parser.add_argument("--outdir", "-O", help="Write individual UUID.json manifests here too.")
+    args = parser.parse_args(arguments)
+    try:
+        source = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8")
+        data = json.loads(source)
+        if isinstance(data, dict) and data.get("status") == "ok" and "result" in data:
+            data = data["result"]
+        result = match_with_files(data, args.folder, args.base_material, args.accent_material)
+        if args.output:
+            _write_json(Path(args.output), result)
+        if args.outdir:
+            for name, item in result.items():
+                _write_json(Path(args.outdir) / name, item)
+        if not args.output and not args.outdir:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"match_with_files: {error}", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    import json
-    from my_printer import pprint
-
-    Term.initialize("localhost", 5000)
-    baseFolder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-    with open(os.path.join(baseFolder, 'obj', 'components.json'), "r") as f:
-        data = json.load(f)
-
-    result = match_with_files(data, folder=os.path.join(baseFolder, 'STLs'), base_material="ABS Plastic (Voron Black)", accent_material="ABS Plastic (Voron Red)")
-
-    pprint(result)
+    raise SystemExit(main())

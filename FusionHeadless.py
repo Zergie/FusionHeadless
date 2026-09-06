@@ -1,83 +1,72 @@
-import adsk.core # type: ignore
-import importlib
-import os
+"""Fusion 360 add-in entry point for FusionHeadless."""
+
+from __future__ import annotations
+
+from pathlib import Path
 import sys
-import threading
-import traceback
+from threading import RLock, Thread
+from typing import Any
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, base_dir)
+import adsk.core
 
-try:
-    import server
-except Exception:
-    adsk.core.Application.get().userInterface.messageBox("Loading failed:\n" + traceback.format_exc())
 
-def import_module(path:str):
-    name = os.path.splitext(os.path.basename(path))[0]
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    sys.modules[name] = module
+_PROJECT_ROOT = str(Path(__file__).resolve().parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
-try:
-    # import utils module early to keep it from colliding with the select
-    # module needed by http.server
-    import_module(os.path.join(base_dir, "routes", "_utils_.py"))
-except Exception:
-    adsk.core.Application.get().userInterface.messageBox("Loading modules failed:\n" + traceback.format_exc())
+from adapter import FusionAdapter
+from fusion_host import FusionHost
 
-app = None
-handlers = []
-server_thread: threading.Thread|None = None
 
-class RestartHandler(adsk.core.CustomEventHandler):
-    def __init__(self):
-        super().__init__()
-    def notify(self, args):
-        global server_thread
+_lock = RLock()
+_adapter: FusionAdapter | None = None
+_host: FusionHost | None = None
 
-        try:
-            server.stop_server()
-        except Exception:
-            adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())
 
-        try:
-            importlib.reload(server)
-        except Exception:
-            adsk.core.Application.get().userInterface.messageBox("Error reloading server:\n" + traceback.format_exc())
+def run(context: Any) -> None:
+    """Start the adapter without blocking Fusion's add-in startup callback."""
+    global _adapter, _host
+    with _lock:
+        if _adapter is not None:
+            return
+        app = adsk.core.Application.get()
+        host = FusionHost(app, adsk)
+        host.start()
+        adapter = FusionAdapter(host=host)
+        _host = host
+        _adapter = adapter
+        Thread(target=_start_adapter, args=(adapter, host), daemon=True).start()
 
-        try:
-            server_thread = threading.Thread(target=server.start_server, daemon=True)
-            server_thread.start()
-        except Exception:
-            adsk.core.Application.get().userInterface.messageBox("Restart failed:\n" + traceback.format_exc())
 
-def register_event_handler(event_id:str, on_event):
-    global app, handlers
-    if not app:
-        raise RuntimeError("Application instance is not initialized.")
-    customEvent = app.registerCustomEvent(event_id)
-    customEvent.add(on_event)
-    handlers.append(on_event)
+def stop(context: Any) -> None:
+    """Stop the child adapter and release Fusion event resources."""
+    global _adapter, _host
+    with _lock:
+        adapter = _adapter
+        host = _host
+        _adapter = None
+        _host = None
+    if host is not None:
+        host.close()
+    if adapter is not None:
+        adapter.stop()
 
-def run(context):
-    global app, server_thread
-    app = adsk.core.Application.get()
 
-    register_event_handler('FusionHeadless.ExecOnUiThread', server.ExecOnUiThreadHandler())
-    register_event_handler('FusionHeadless.Restart', RestartHandler())
-
+def _start_adapter(adapter: FusionAdapter, host: FusionHost) -> None:
     try:
-        server_thread = threading.Thread(target=server.start_server, daemon=True)
-        server_thread.start()
+        started = adapter.start()
     except Exception:
-        adsk.core.Application.get().userInterface.messageBox("Startup failed:\n" + traceback.format_exc())
+        started = False
+    if not started:
+        _show_setup_guidance(host)
 
-def stop(context):
-    global server_thread
-    if server_thread and server_thread.is_alive():
-        try:
-            server.stop_server()
-        except Exception:
-            adsk.core.Application.get().userInterface.messageBox("Error stopping server:\n" + traceback.format_exc())
+
+def _show_setup_guidance(host: FusionHost) -> None:
+    try:
+        host.dispatch(
+            lambda: host.context()["ui"].messageBox(
+                "FusionHeadless setup is incomplete. Complete setup and see README.md."
+            )
+        )
+    except Exception:
+        pass

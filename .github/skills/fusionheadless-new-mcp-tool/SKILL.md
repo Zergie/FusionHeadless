@@ -1,135 +1,98 @@
 ---
 name: fusionheadless-new-mcp-tool
-description: 'Add a new MCP tool to FusionHeadless. Use when creating a new routes/mcp/<tool_name>.py, adding a tool to the MCP tools/list endpoint, or implementing a new tool callable from VS Code MCP client.'
-argument-hint: 'tool name and brief description of what it should do'
+description: Add or change a FusionHeadless MCP tool using one colocated mcp_tool declaration and implementation.
+argument-hint: Tool name and the Fusion operation it should perform
 ---
 
-# Add New FusionHeadless MCP Tool
+# Add an MCP tool
 
-Creates a new MCP tool exposed via `tools/list` and callable via `tools/call` on the `/mcp` endpoint.
+Add, remove, or rename a tool in one place: `mcp_tools.py`. The module derives
+the client inventory and bridge dispatch from each decorated implementation;
+`server.py` already serves them through `/mcp`.
 
-## Conventions
+## Decorator interface
 
-- **Tool name** = filename stem (e.g. `list_open_documents.py` → `"list_open_documents"`)
-- **Tool description** = module-level docstring, whitespace-normalized
-- **Input schema** = returned by `get_input_schema()` — must be `{"type": "object", ...}`
-- **Files starting with `_`** are never discovered as tools
+Declare the external name, description, and JSON input schema immediately
+beside the implementation:
+
+```python
+@mcp_tool(
+    name,
+    description="One concise client-facing description.",
+    input_schema={"type": "object", "properties": {}},
+)
+def mcp_operation(query: dict[str, Any], context: Any) -> dict[str, Any]:
+    app = context.app
+    return {"result": "value"}
+```
+
+- `name` is the single source of truth for the external MCP tool name.
+- `description` is returned by `tools/list`.
+- `input_schema` is returned as `inputSchema`; its `required` array also drives
+  required-argument validation before the Fusion call.
+- The decorated function is registered for Fusion execution. Its actual Python
+  function name drives bridge dispatch automatically.
+
+Do not add a parallel metadata dictionary, a separate required-arguments list,
+a string copy of the operation name, or another registration step.
+
+## Current example
+
+This declaration is copied from `mcp_tools.py`:
+
+```python
+@mcp_tool(
+    "list_open_documents",
+    description="List all currently open Fusion 360 documents.",
+    input_schema={"type": "object", "properties": {}},
+)
+def mcp_list_open_documents(query: dict[str, Any], context: Any) -> dict[str, Any]:
+    # Read the Fusion application and return a JSON-compatible dictionary.
+```
+
+Use the same signature shape for new tools: invocation supplies `query` and
+the unified context. Read `context.app`, `context.ui`, or `context.adsk` only
+when needed. Validate values more deeply inside the function when JSON Schema
+presence checks are insufficient.
+
+## Return contract
+
+- A value without a top-level `content` key is serialized into one MCP text
+  content item.
+- A dictionary containing `content` is passed through as an already-formed MCP
+  result.
+- Raise a clear exception for invalid input or unavailable Fusion state; the
+  MCP endpoint returns the failure as a JSON-RPC error.
 
 ## Workflow
 
-### 1. Create the tool module
+1. Read the existing definitions and helpers in `mcp_tools.py`.
+2. Add one decorated implementation with its complete external metadata.
+3. Add characterization and dispatch tests in `tests/test_mcp.py`. Derive
+   expectations from `tool_definitions()` or `tool_inventory()` where the
+   contract should follow declarations.
+4. Confirm `tools/list` includes the declaration and `tools/call` invokes the
+   decorated operation.
 
-Create `routes/mcp/<tool_name>.py` from the template below.
-The filename becomes the MCP tool name — choose it carefully (breaking change to rename).
+Do not edit `server.py` for a normal tool addition. Do not create a discovery
+directory or make filenames part of the public contract.
 
-```python
-"""One-line summary. Longer explanation on subsequent lines.
+## Verification
 
-Detail continues here. The full docstring (whitespace-normalized) becomes
-the MCP tool description visible to the client.
-"""
+Run the complete suite from the repository root:
 
-
-def get_input_schema() -> dict:
-    """Must be the first function — appears immediately after imports/constants."""
-    return {
-        "type": "object",
-        "properties": {
-            "param_name": {
-                "type": "string",
-                "description": "What this parameter does."
-            }
-        },
-        "required": ["param_name"]   # omit key or use [] when no required params
-    }
-
-
-def handle(query: dict, app, adsk) -> dict:
-    # Validate
-    value = query.get("param_name")
-    if not value:
-        raise Exception("'param_name' is required")
-
-    # Fusion API work here
-    return {"result": value}
-
-
-if __name__ == "__main__":
-    from _client_ import test
-    test(__file__, {"param_name": "example"}, timeout=30)
+```text
+python -c "import os,pathlib,sys,unittest; d=str(pathlib.Path('.scratch/deps').resolve()); os.environ['PYTHONPATH']=d+os.pathsep+os.environ.get('PYTHONPATH',''); sys.path.insert(0,d); r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover('tests')); raise SystemExit(0 if r.wasSuccessful() else 1)"
+python -m compileall -q adapter.py bridge.py context.py server.py fusion_routes.py mcp_tools.py routing.py tests
+git diff --check
 ```
 
-**Rules:**
-- `get_input_schema()` must be the **first function**, right after any imports and module-level constants.
-- `required` lives inside the schema dict, not as a separate method.
-- No `describe()` — that pattern is removed.
+Verify the external name, description, schema, required arguments, dispatch,
+return wrapping, and invalid-input behavior.
 
-### 2. Dependency injection in `handle()`
+## References
 
-Request context by parameter name:
-
-| Parameter | Value |
-|-----------|-------|
-| `query` | Dict of tool arguments from the MCP call |
-| `app` | Fusion `Application` instance |
-| `adsk` | Fusion API module |
-
-Only declare parameters you need — unused ones are skipped automatically.
-
-### 3. Return types
-
-| Return | Effect |
-|--------|--------|
-| `dict` / `list` / `str` | JSON-serialized into MCP text content |
-| `{"content": [...]}` | Passed through as-is (already MCP content) |
-
-### 4. Test locally
-
-```bash
-cd routes/mcp
-python <tool_name>.py
-```
-
-No registration step needed — the dispatcher auto-discovers all `.py` files in `routes/mcp/` that don't start with `_`.
-
-### 5. Verify discovery
-
-After reloading or restarting Fusion, check `tools/list`:
-
-```bash
-curl -s -X POST http://localhost:5000/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python -m json.tool
-```
-
-Confirm:
-- `name` equals the filename stem
-- `description` equals the normalized docstring
-- `inputSchema.type` is `"object"`
-- `required` fields are present
-
-Or use the `/reload` endpoint first to pick up changes without restarting Fusion:
-
-```bash
-curl http://localhost:5000/reload
-```
-
-## Checklist
-
-- [ ] Filename chosen deliberately (it becomes the external tool name)
-- [ ] Module docstring is present and descriptive (missing one triggers a dispatcher warning)
-- [ ] `get_input_schema()` is the first function in the file
-- [ ] `required` array is accurate inside the schema
-- [ ] `handle()` validates inputs and raises clear exceptions on bad input
-- [ ] Local test passes (`python <tool_name>.py`)
-- [ ] Tool appears in `tools/list` with correct name, description, and schema
-
-## Discovery Warnings
-
-The dispatcher prints warnings and **skips** tools that:
-- Are missing `get_input_schema()`
-- Return a schema where `type != "object"`
-- Have `get_input_schema()` raise an exception
-- Have an empty module docstring
-
-Check Fusion's Python console for `[FusionHeadless] WARNING:` lines if a tool doesn't appear.
+- `mcp_tools.py` — `mcp_tool`, inventory, dispatch, and implementations
+- `server.py` — JSON-RPC protocol endpoint
+- `tests/test_mcp.py` — declaration and protocol contracts
+- `tests/test_contract.py` — process-dependency boundary

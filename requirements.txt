@@ -1,2 +1,4 @@
-Pygments==2.19.1
-jmespath==1.0.1
+fastapi==0.115.6
+uvicorn==0.34.0
+numpy-stl==4.0.0
+numpy==2.4.6

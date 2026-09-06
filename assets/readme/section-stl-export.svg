@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="140" viewBox="0 0 1200 140" role="img" aria-labelledby="title desc">
+  <title id="title">Print-oriented STL export</title>
+  <desc id="desc">FusionHeadless documentation section: Print-oriented STL export.</desc>
+  <rect width="1200" height="140" rx="16" fill="#202529"/>
+  <g id="section-symbol" fill="none" stroke="#f6a45b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m52 92 26-45 27 45H52l26-17 27 17M78 47v28M46 106h65"/>
+  </g>
+  <path d="M137 38v64" stroke="#626b70" stroke-width="1"/>
+  <text x="171" y="89" fill="#f5f3ec" font-family="Segoe UI, Arial, sans-serif" font-size="54" font-weight="600">Print-oriented STL export</text>
+</svg>

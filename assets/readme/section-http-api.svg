@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="140" viewBox="0 0 1200 140" role="img" aria-labelledby="title desc">
+  <title id="title">HTTP API</title>
+  <desc id="desc">FusionHeadless documentation section: HTTP API.</desc>
+  <rect width="1200" height="140" rx="16" fill="#202529"/>
+  <g id="section-symbol" fill="none" stroke="#f6a45b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M48 58h60m-12-12 12 12-12 12M108 86H48m12-12L48 86l12 12"/>
+  </g>
+  <path d="M137 38v64" stroke="#626b70" stroke-width="1"/>
+  <text x="171" y="89" fill="#f5f3ec" font-family="Segoe UI, Arial, sans-serif" font-size="54" font-weight="600">HTTP API</text>
+</svg>

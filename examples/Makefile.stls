@@ -1,0 +1,27 @@
+# Run from the FusionHeadless repository root with GNU Make and a POSIX shell.
+# Set PARTS to component names in the active Fusion design (no spaces here).
+SHELL := sh
+.SHELLFLAGS := -ec
+.DEFAULT_GOAL := all
+.NOTPARALLEL:
+
+ifeq ($(OS),Windows_NT)
+CLI_PYTHON := cli/.venv/Scripts/python.exe
+else
+CLI_PYTHON := cli/.venv/bin/python
+endif
+FUSION_CLI = "$(CLI_PYTHON)" cli/fusion_cli.py
+
+PARTS := Bracket Cover
+OUT := build/stl
+ORIENT ?=
+
+.PHONY: all FORCE
+all: $(PARTS:%=$(OUT)/%.stl)
+
+# Live, possibly unsaved CAD changes have no filesystem timestamp for Make.
+FORCE:
+
+$(OUT)/%.stl: FORCE
+	@mkdir -p "$(dir $@)"
+	$(FUSION_CLI) export --format stl --component "$*" $(if $(ORIENT),--orient "$(ORIENT)") --output "$@"

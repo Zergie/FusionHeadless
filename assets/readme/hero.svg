@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">FusionHeadless — Fusion 360 automation, through a local API</title>
+  <desc id="desc">Architecture diagram: HTTP, CLI, and MCP enter a local Python server, which communicates over a framed bridge with the Fusion UI thread.</desc>
+  <rect width="1200" height="420" rx="16" fill="#202529"/>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <g id="title-block" fill="#f5f3ec">
+      <text x="56" y="63" font-size="22" letter-spacing="3" fill="#f6a45b">FUSION 360 / LOCAL AUTOMATION</text>
+      <text x="52" y="148" font-size="76" font-weight="650">FusionHeadless</text>
+      <text x="56" y="199" font-size="30">Your design session. A programmable interface.</text>
+    </g>
+    <g id="process-flow">
+      <path d="M56 238H1144" stroke="#626b70" stroke-width="1"/>
+      <text x="56" y="291" font-size="26" fill="#f5f3ec">HTTP / CLI / MCP</text>
+      <text x="56" y="330" font-size="21" fill="#b7bfc1">Inspect · edit · export</text>
+      <path d="M307 301H367m-9-7 9 7-9 7" fill="none" stroke="#f6a45b" stroke-width="2"/>
+      <text x="392" y="291" font-size="26" fill="#f5f3ec">Python server</text>
+      <text x="392" y="330" font-size="21" fill="#b7bfc1">127.0.0.1:5000</text>
+      <path d="M596 301H821m-9-7 9 7-9 7" fill="none" stroke="#f6a45b" stroke-width="2"/>
+      <text x="627" y="281" font-size="20" fill="#f6a45b">Framed bridge</text>
+      <text x="850" y="291" font-size="26" fill="#f5f3ec">Fusion UI thread</text>
+      <text x="850" y="330" font-size="21" fill="#b7bfc1">Live design operations</text>
+      <path d="M392 352v16h739v-16" fill="none" stroke="#626b70" stroke-width="1"/>
+      <text x="672" y="397" font-size="18" fill="#b7bfc1">TWO PROCESSES / ONE SESSION</text>
+    </g>
+  </g>
+</svg>

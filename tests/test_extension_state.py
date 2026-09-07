@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 from context import FusionContext, fusion, registry, server
 from extension_state import extension_fingerprint, reset_extensions
-import fusion_routes
-import mcp_tools
+import routes
+import mcp.tools as mcp_tools
+from mcp import registry as mcp_registry
 import routing
 
 
@@ -20,9 +21,9 @@ class ExtensionStateTests(unittest.TestCase):
         self.addCleanup(reset_extensions)
 
     def test_reset_replaces_declarations_and_preserves_module_references(self) -> None:
-        original_route = fusion_routes.fusion_eval
+        original_route = routes.fusion_eval
         original_tool = mcp_tools.mcp_list_open_documents
-        fusion_routes.runtime_attribute = object()
+        routes.runtime_attribute = object()
         mcp_tools.runtime_attribute = object()
 
         @fusion
@@ -37,30 +38,30 @@ class ExtensionStateTests(unittest.TestCase):
         def runtime_route(context):
             return None
 
-        @mcp_tools.mcp_tool("temporary_extension", description="Temporary", input_schema={})
+        @mcp_registry.mcp_tool("temporary_extension", description="Temporary", input_schema={})
         def runtime_tool(query, context):
             return None
 
         self.assertNotEqual(extension_fingerprint(), self.baseline)
         self.assertEqual(reset_extensions(), self.baseline)
         self.assertEqual(extension_fingerprint(), self.baseline)
-        for module in (fusion_routes, mcp_tools):
+        for module in (routes, mcp_tools):
             self.assertIs(importlib.import_module(module.__name__), module)
             self.assertFalse(hasattr(module, "runtime_attribute"))
-        self.assertIsNot(fusion_routes.fusion_eval, original_route)
+        self.assertIsNot(routes.fusion_eval, original_route)
         self.assertIsNot(mcp_tools.mcp_list_open_documents, original_tool)
         self.assertNotIn(RuntimeOnly.__name__, registry.fusion)
         self.assertNotIn(runtime_callback.__name__, registry.server)
         self.assertNotIn(runtime_route, [item.operation for item in routing.route_definitions()])
-        self.assertNotIn(runtime_tool, [item.operation for item in mcp_tools.tool_definitions()])
-        for item in (*routing.route_definitions(), *mcp_tools.tool_definitions()):
+        self.assertNotIn(runtime_tool, [item.operation for item in mcp_registry.tool_definitions()])
+        for item in (*routing.route_definitions(), *mcp_registry.tool_definitions()):
             self.assertIs(registry.fusion[item.operation.__name__].value, item.operation)
 
     def test_partial_import_failure_clears_declarations_and_allows_retry(self) -> None:
         original_import = importlib.import_module
-        for module in (fusion_routes, mcp_tools):
+        for module in (routes, mcp_tools):
             with self.subTest(module=module.__name__):
-                original_route = fusion_routes.fusion_eval
+                original_route = routes.fusion_eval
 
                 def fail_import(name, package=None):
                     fresh = original_import(name, package)
@@ -77,11 +78,11 @@ class ExtensionStateTests(unittest.TestCase):
                 self.assertIs(registry.fusion["FusionContext"].value, FusionContext)
                 self.assertEqual(registry.server, {})
                 self.assertEqual(routing.route_definitions(), ())
-                self.assertEqual(mcp_tools.tool_definitions(), ())
+                self.assertEqual(mcp_registry.tool_definitions(), ())
                 with self.assertRaisesRegex(RuntimeError, "extension module has no source path"):
                     extension_fingerprint()
                 self.assertEqual(reset_extensions(), self.baseline)
-                self.assertIsNot(fusion_routes.fusion_eval, original_route)
+                self.assertIsNot(routes.fusion_eval, original_route)
                 self.assertIs(original_import(module.__name__), module)
 
     def test_fingerprint_failure_also_clears_replacement_and_allows_retry(self) -> None:
@@ -91,7 +92,7 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertEqual(set(registry.fusion), {"FusionContext"})
         self.assertEqual(registry.server, {})
         self.assertEqual(routing.route_definitions(), ())
-        self.assertEqual(mcp_tools.tool_definitions(), ())
+        self.assertEqual(mcp_registry.tool_definitions(), ())
         self.assertEqual(reset_extensions(), self.baseline)
 
     def test_fingerprint_covers_sources_and_delivery_metadata(self) -> None:
@@ -100,14 +101,14 @@ class ExtensionStateTests(unittest.TestCase):
             self.assertNotEqual(extension_fingerprint(), self.baseline)
 
         export = next(item for item in routing.route_definitions()
-                      if item.operation is fusion_routes.export_route)
+                      if item.operation is routes.export_route)
         routing.api_route(export.path, methods=export.methods,
                           binary=routing.BinaryResponse("test/type", "changed"))(export.operation)
         self.assertNotEqual(extension_fingerprint(), self.baseline)
         reset_extensions()
 
-        tool = mcp_tools.tool_definitions()[0]
-        mcp_tools.mcp_tool(tool.name, description=tool.description,
+        tool = mcp_registry.tool_definitions()[0]
+        mcp_registry.mcp_tool(tool.name, description=tool.description,
                            input_schema={**tool.input_schema, "description": "changed"})(tool.operation)
         self.assertNotEqual(extension_fingerprint(), self.baseline)
 

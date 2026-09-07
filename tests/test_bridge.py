@@ -18,7 +18,7 @@ from unittest.mock import patch
 from adapter import FusionAdapter
 from bridge import FrameProtocolError, FramedConnection
 from context import fusion, registry, serialize_value, server as server_export
-import fusion_routes
+import routes
 import server
 from tests.harness import ChildProcessHarness, FakeFusionHost, route_path
 
@@ -67,6 +67,37 @@ class FrameTests(unittest.TestCase):
     def test_clean_eof_before_a_frame_is_distinct(self) -> None:
         with self.assertRaises(EOFError):
             FramedConnection(io.BytesIO(), io.BytesIO()).read()
+
+    def test_cycles_fail_before_writing_a_frame(self) -> None:
+        cycle_list = []
+        cycle_list.append(cycle_list)
+        cycle_dict = {}
+        cycle_dict["self"] = cycle_dict
+        for value in (cycle_list, cycle_dict):
+            with self.subTest(kind=type(value).__name__):
+                output = io.BytesIO()
+                with self.assertRaisesRegex(TypeError, "cyclic object graphs"):
+                    FramedConnection(io.BytesIO(), output).write(value)
+                self.assertEqual(output.getvalue(), b"")
+
+    def test_serializer_rejects_nested_binary_in_values_and_keys(self) -> None:
+        values = ([b"bytes"], {"data": bytearray(b"bytes")},
+                  (memoryview(b"bytes"),), {b"key": 1}, {(b"key",): 1})
+        for value in values:
+            for encode in (serialize_value, self.encode):
+                with self.subTest(value=value, encode=encode.__name__):
+                    with self.assertRaisesRegex(TypeError, "top-level bridge payload"):
+                        encode(value)
+
+    def test_dictionary_keys_follow_json_contract(self) -> None:
+        value = {"text": 1, 2: 2, 3.5: 3, False: 4, None: 5}
+        self.assertEqual(serialize_value(value), value)
+        self.assertEqual(self.decode(self.encode(value)),
+                         {"text": 1, "2": 2, "3.5": 3, "false": 4, "null": 5})
+        for encode in (serialize_value, self.encode):
+            with self.subTest(encode=encode.__name__):
+                with self.assertRaisesRegex(TypeError, "bridge dictionary keys"):
+                    encode({("tuple",): 1})
 
     def test_decorated_instances_cross_by_value_without_reinitializing(self) -> None:
         constructor_calls: list[int] = []
@@ -154,7 +185,7 @@ class AdapterExecTests(unittest.TestCase):
             scripts=SimpleNamespace(count=len(addins), item=addins.__getitem__),
         )
 
-        result = fusion_routes.scripts_route(SimpleNamespace(app=app))
+        result = routes.scripts_route(SimpleNamespace(app=app))
 
         self.assertEqual(result, {
             "scripts": [
@@ -177,7 +208,7 @@ class AdapterExecTests(unittest.TestCase):
 
         addins[0].stop = lambda: setattr(addins[0], "isRunning", False) or True
         addins[1].run = lambda wait: setattr(addins[1], "isRunning", True) or True
-        result = fusion_routes.scripts_route(
+        result = routes.scripts_route(
             SimpleNamespace(app=app), enable=["first"], disable=["second"]
         )
 
@@ -206,10 +237,10 @@ class AdapterExecTests(unittest.TestCase):
         app = SimpleNamespace(scripts=SimpleNamespace(count=1, item=lambda _: addin))
 
         with self.assertRaisesRegex(ValueError, "both enabled and disabled"):
-            fusion_routes.scripts_route(SimpleNamespace(app=app),
+            routes.scripts_route(SimpleNamespace(app=app),
                                         enable=["known"], disable=["known"])
         with self.assertRaisesRegex(ValueError, "Unknown add-in Script ID"):
-            fusion_routes.scripts_route(SimpleNamespace(app=app), enable=["missing"])
+            routes.scripts_route(SimpleNamespace(app=app), enable=["missing"])
 
     def test_eval_preserves_expression_and_depth_contract(self) -> None:
         host = FakeFusionHost()
@@ -222,7 +253,7 @@ class AdapterExecTests(unittest.TestCase):
         self.addCleanup(adapter.stop)
 
         request = Request(
-            f"http://127.0.0.1:{port}{route_path(fusion_routes.fusion_eval)}",
+            f"http://127.0.0.1:{port}{route_path(routes.fusion_eval)}",
             data=b'{"code":"1 + 2"}',
             method="POST",
             headers={"Content-Type": "application/json"},
@@ -241,7 +272,7 @@ class AdapterExecTests(unittest.TestCase):
         self.addCleanup(adapter.stop)
         assert adapter.process is not None
         original_pid = adapter.process.pid
-        original_route = fusion_routes.fusion_eval
+        original_route = routes.fusion_eval
 
         @fusion
         def runtime_registration(query, context):
@@ -263,7 +294,7 @@ class AdapterExecTests(unittest.TestCase):
         self.assertIsNotNone(adapter.process)
         self.assertNotEqual(adapter.process.pid, original_pid)
         self.assertNotIn("runtime_registration", registry.fusion)
-        self.assertIsNot(fusion_routes.fusion_eval, original_route)
+        self.assertIsNot(routes.fusion_eval, original_route)
 
         deadline = time.monotonic() + 5
         while True:

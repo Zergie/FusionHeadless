@@ -42,3 +42,11 @@ serving thread, and lockfile ownership. HTTP handlers ask this runtime to
 execute Fusion work or request replacement. The runtime rejects new requests
 during replacement and closes its connection and HTTP server after the
 response completes; a rejected extension reset still requires replacement.
+
+## Temporary Fusion effects
+
+The state changes and output files owned temporarily by one Fusion operation.
+The module in `routes/_temporary.py` captures original values before mutation
+and attempts every restoration and file cleanup, preserving failure context.
+Each operation chooses which effects are temporary; intentional persistent
+render changes are outside this module's ownership.

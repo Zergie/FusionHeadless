@@ -6,8 +6,8 @@ argument-hint: Route path and the Fusion operation it should perform
 
 # Add a Fusion-backed HTTP route
 
-Add, remove, or rename a normal Fusion-backed endpoint in one place:
-`fusion_routes.py`. Do not edit `server.py`; it installs every declaration
+Add, remove, or rename a normal Fusion-backed endpoint in one module under `routes/`. For a new module,
+import its operation explicitly in `routes/__init__.py`. Do not edit `server.py`; it installs every declaration
 returned by `routing.route_definitions()`.
 
 ## Decorator interface
@@ -26,8 +26,8 @@ parameter needs public help text:
 
 - `path` is the single source of truth for the public URL.
 - `methods` is a tuple of accepted HTTP methods. It defaults to GET. Use GET
-  for read-only work and POST for all other operations. Only `/parameter`
-  intentionally supports both.
+  for read-only work and POST for all other operations. `/parameter` and `/scripts`
+  intentionally support both.
 - `binary` is optional response metadata. When present, the operation returns
   bytes and the child applies its media type and content-disposition headers.
 
@@ -39,13 +39,13 @@ documentation. Use `context.app`, `context.ui`, and `context.adsk` as needed.
 
 ## Current binary-route example
 
-The `/render` declaration in `fusion_routes.py` is the reference pattern:
+The `/render` declaration in `routes/render.py` is the reference pattern:
 
 ```python
 @api_route(
     "/render",
     methods=("POST",),
-    binary=BinaryResponse("image/png", 'inline; filename="render.png"'),
+    binary=BinaryResponse("image/png", "render.png", disposition="inline"),
 )
 def render_route(
     context: Any,
@@ -63,13 +63,14 @@ operations; the child converts it to the route's error response.
 
 ## Workflow
 
-1. Read nearby implementations in `fusion_routes.py` and identify reusable
+1. Read nearby implementations under `routes/` and identify reusable
    policy helpers.
 2. Add one decorated function. Put the URL, methods, and optional
    binary metadata only in its decorator.
-3. Add behavior tests under `tests/`. Obtain the URL from the registered route
+3. Import new operation modules in `routes/__init__.py`.
+4. Add behavior tests under `tests/`. Obtain the URL from the registered route
    definition when a test needs it; do not duplicate the path literal.
-4. Verify that `server.py` and any central registration table were not changed.
+5. Verify that `server.py` and the route registry implementation were not changed.
 
 Do not create a second route registry, manually add a FastAPI decorator in
 `server.py`, or compare request paths in conditionals. Built-in child-only
@@ -81,7 +82,7 @@ Run the complete suite from the repository root:
 
 ```text
 python -c "import os,pathlib,sys,unittest; d=str(pathlib.Path('.scratch/deps').resolve()); os.environ['PYTHONPATH']=d+os.pathsep+os.environ.get('PYTHONPATH',''); sys.path.insert(0,d); r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover('tests')); raise SystemExit(0 if r.wasSuccessful() else 1)"
-python -m compileall -q FusionHeadless.py adapter.py bridge.py context.py fusion_host.py server.py fusion_routes.py mcp_tools.py routing.py fusion_invocation.py versioning.py cli tests
+python -m compileall -q FusionHeadless.py adapter.py bridge.py context.py fusion_host.py server.py routes mcp fusion_support.py extension_state.py routing.py fusion_invocation.py versioning.py cli tests
 git diff --check
 ```
 
@@ -93,7 +94,7 @@ response contract.
 ## References
 
 - `routing.py` — `api_route`, `RouteDefinition`, and `BinaryResponse`
-- `fusion_routes.py` — all Fusion-backed route declarations
+- `routes/` — Fusion-backed route declarations and focused helper modules
 - `server.py` — automatic installation and response handling
 - `tests/test_contract.py` — registration contract
 - `tests/test_binary_routes.py` — binary response examples

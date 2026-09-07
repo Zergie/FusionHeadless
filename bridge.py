@@ -47,27 +47,11 @@ class FramedConnection:
             flush()
 
     @staticmethod
-    def _contains_binary(value: Any) -> bool:
-        if isinstance(value, (bytes, bytearray, memoryview)):
-            return True
-        elif isinstance(value, dict):
-            return any(
-                FramedConnection._contains_binary(key) or FramedConnection._contains_binary(item)
-                for key, item in value.items()
-            )
-        elif isinstance(value, (list, tuple)):
-            return any(FramedConnection._contains_binary(item) for item in value)
-        else:
-            return False
-
-    @classmethod
-    def _encode_frame(cls, value: Any) -> bytes:
+    def _encode_frame(value: Any) -> bytes:
         if isinstance(value, (bytes, bytearray, memoryview)):
             payload = bytes(value)
             kind = b"B"
         else:
-            if cls._contains_binary(value):
-                raise TypeError("binary values are supported only as a top-level bridge payload")
             serialized = serialize_value(value)
             try:
                 payload = json.dumps(

@@ -15,7 +15,7 @@ import numpy as np
 from adapter import FusionAdapter
 from cli import fusion_cli
 from context import FusionContext, server_callback_scope
-import fusion_routes
+import routes
 import server
 from tests.harness import route_path
 from tests.test_binary_routes import BinaryHost, ExportOptions
@@ -71,7 +71,7 @@ class OrientedExportTests(unittest.TestCase):
         self.adapter = FusionAdapter(host=self.host, port=port)
         self.assertTrue(self.adapter.start(timeout=5))
         self.addCleanup(self.adapter.stop)
-        self.url = f"http://127.0.0.1:{port}{route_path(fusion_routes.export_route)}"
+        self.url = f"http://127.0.0.1:{port}{route_path(routes.export_route)}"
 
     def request(self, **values):
         request = Request(self.url, data=json.dumps({"format": "stl", **values}).encode(),
@@ -221,7 +221,7 @@ class ServerCallbackContextTests(unittest.TestCase):
         context = FusionContext(None, None, None)
         with self.assertRaisesRegex(ValueError, "Unregistered"):
             context.call_server(lambda: None)
-        operation = fusion_routes._orient_export_file
+        operation = routes.export._orient_export_file
         with self.assertRaisesRegex(RuntimeError, "active Fusion invocation"):
             context.call_server(operation, "path", [])
         def factory(name):

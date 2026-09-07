@@ -12,15 +12,21 @@ from context import fusion
 @dataclass(frozen=True)
 class BinaryResponse:
     media_type: str
-    content_disposition: str
+    filename: str
     defaults: dict[str, str] = field(default_factory=dict)
+    disposition: str = "attachment"
 
-    def headers(self, query: dict[str, Any]) -> dict[str, str]:
+    def resolve_filename(self, query: dict[str, Any]) -> str:
         values = {
             **self.defaults,
             **{key: str(value).lower() for key, value in query.items()},
         }
-        return {"Content-Disposition": self.content_disposition.format_map(values)}
+        return self.filename.format_map(values)
+
+
+@dataclass(frozen=True)
+class RedirectURL:
+    """Mark an optional URL template parameter consumed by the HTTP child."""
 
 
 @dataclass(frozen=True)
@@ -38,6 +44,7 @@ class RouteParameter:
     annotation: Any
     default: Any
     description: str | None = None
+    redirect: bool = False
 
     @property
     def required(self) -> bool:
@@ -84,6 +91,7 @@ def route_parameters(operation: Callable[..., Any]) -> tuple[RouteParameter, ...
     for parameter in parameters[1:]:
         annotation = hints.get(parameter.name, parameter.annotation)
         description = None
+        redirect = False
         if get_origin(annotation) is Annotated:
             annotation, *metadata = get_args(annotation)
             documentation = next(
@@ -91,11 +99,13 @@ def route_parameters(operation: Callable[..., Any]) -> tuple[RouteParameter, ...
             )
             if documentation is not None:
                 description = documentation.description
+            redirect = any(isinstance(item, RedirectURL) for item in metadata)
         result.append(RouteParameter(
             parameter.name,
             annotation,
             parameter.default,
             description,
+            redirect,
         ))
     return tuple(result)
 

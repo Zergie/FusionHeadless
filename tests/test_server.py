@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import socket
 import threading
@@ -8,17 +9,100 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request as HttpRequest, urlopen
 
 from fastapi import Request
 from fastapi.routing import APIRoute
 import uvicorn
 
 import server
+from mcp.endpoint import mcp
+import routes
 from tests.harness import route_path
 
 
 class FastApiServerTests(unittest.TestCase):
+    def test_http_remains_responsive_while_waiting_for_fusion(self) -> None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.setblocking(False)
+        origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+        instance = uvicorn.Server(
+            uvicorn.Config(server.app, log_config=None, access_log=False)
+        )
+        thread = threading.Thread(
+            target=instance.run, kwargs={"sockets": [listener]}, daemon=True,
+        )
+
+        def request(path, payload=None, timeout=5):
+            data = None if payload is None else json.dumps(payload).encode()
+            request = HttpRequest(
+                origin + path, data=data, headers={"Content-Type": "application/json"},
+            )
+            try:
+                response = urlopen(request, timeout=timeout)
+            except HTTPError as error:
+                response = error
+            with response:
+                return response.status, json.load(response)
+
+        cases = (
+            (route_path(routes.bodies_route), None, 200),
+            (route_path(server.execute), {"code": "return {}"}, 200),
+            (route_path(mcp), {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "list_open_documents", "arguments": {}},
+            }, 200),
+            (route_path(server.restart), {}, 503),
+        )
+        thread.start()
+        try:
+            deadline = time.monotonic() + 5
+            while not instance.started:
+                if time.monotonic() >= deadline:
+                    self.fail("Uvicorn did not start within five seconds")
+                time.sleep(0.01)
+            for path, payload, expected_status in cases:
+                with self.subTest(path=path):
+                    entered, release = threading.Event(), threading.Event()
+
+                    def wait_for_fusion(*args, **kwargs):
+                        entered.set()
+                        if not release.wait(5):
+                            raise TimeoutError("test did not release Fusion")
+                        return {}
+
+                    conversation = Mock()
+                    conversation.execute_fusion.side_effect = wait_for_fusion
+                    conversation.restart.side_effect = wait_for_fusion
+                    runtime = server.ServerRuntime(server.app, conversation)
+                    with (
+                        patch.object(server, "_runtime", runtime),
+                        patch.object(server, "_invoke_fusion_operation", side_effect=wait_for_fusion),
+                        ThreadPoolExecutor() as pool,
+                    ):
+                        pending = pool.submit(request, path, payload)
+                        try:
+                            self.assertTrue(entered.wait(2), "request never reached Fusion")
+                            status, result = request(route_path(mcp), {
+                                "jsonrpc": "2.0", "id": 2, "method": "ping",
+                            }, timeout=1)
+                            self.assertEqual(status, expected_status)
+                            if expected_status == 200:
+                                self.assertEqual(result, {"jsonrpc": "2.0", "id": 2, "result": {}})
+                            else:
+                                self.assertEqual(result["error"], "Restart in progress")
+                            self.assertFalse(pending.done(), "Fusion should still be waiting")
+                        finally:
+                            release.set()
+                            self.assertEqual(pending.result(timeout=3)[0], 200)
+        finally:
+            instance.should_exit = True
+            thread.join(timeout=5)
+            listener.close()
+        self.assertFalse(thread.is_alive())
+
     def test_lifecycle_routes_expose_only_their_supported_methods(self) -> None:
         routes = {
             route.path: route
@@ -80,15 +164,17 @@ class FastApiServerTests(unittest.TestCase):
             86400: "1 days, 0 hours, 0 minutes",
         }
         for seconds, expected in cases.items():
-            with self.subTest(seconds=seconds), patch(
-                "server.time.monotonic", return_value=server._startup_time + seconds
+            with (
+                self.subTest(seconds=seconds),
+                patch.object(server, "_startup_time", 0),
+                patch("server.time.monotonic", return_value=seconds),
             ):
                 self.assertEqual(server._uptime(), expected)
 
     def test_unknown_mcp_method_returns_method_not_found(self) -> None:
-        result = asyncio.run(server.mcp({
+        result = asyncio.run(mcp({
             "jsonrpc": "2.0", "id": 7, "method": "unknown"
-        }))
+        }, Request({"type": "http", "app": server.app})))
 
         self.assertEqual(result["error"], {
             "code": -32601,
@@ -156,6 +242,8 @@ class FastApiServerTests(unittest.TestCase):
             "/export", "/files", "/mcp", "/parameter", "/projects",
             "/render", "/restart", "/scripts", "/select", "/status",
         ]
+        from binary_downloads import download_binary
+        expected_routes = sorted([*expected_routes, route_path(download_binary)])
 
         with (
             patch.object(server, "_uptime", return_value="12 seconds"),

@@ -127,7 +127,13 @@ def serialize_value(value: Any) -> Any:
         elif isinstance(item, dict):
             active.add(item_id)
             try:
-                return {key: convert(child) for key, child in item.items()}
+                result = {}
+                for key, child in item.items():
+                    key = convert(key)
+                    if key is not None and not isinstance(key, (str, int, float, bool)):
+                        raise TypeError("bridge dictionary keys must be str, int, float, bool, or None")
+                    result[key] = convert(child)
+                return result
             finally:
                 active.remove(item_id)
         elif isinstance(item, type):

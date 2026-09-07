@@ -282,8 +282,8 @@ the UI thread. Only the child binds port 5000.
 
 | Change | Source of truth |
 | --- | --- |
-| Add a Fusion-backed HTTP route | One `@api_route` declaration in [fusion_routes.py](fusion_routes.py) |
-| Add an MCP tool | One `@mcp_tool` declaration in [mcp_tools.py](mcp_tools.py) |
+| Add a Fusion-backed HTTP route | One `@api_route` declaration per file in [routes/](routes/), imported by its `__init__.py` |
+| Add an MCP tool | One `@mcp_tool` declaration per file in [mcp/tools/](mcp/tools/), imported by its `__init__.py` |
 | Cross the process boundary | Explicit `@fusion` / `@server` registrations in [context.py](context.py) |
 
 Route signatures drive both FastAPI registration and CLI schemas. Fusion-side

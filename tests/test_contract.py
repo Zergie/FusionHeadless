@@ -3,17 +3,31 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+import subprocess
+import sys
 import unittest
 
 import adapter
-import mcp_tools
-import fusion_routes
+import mcp.tools as mcp_tools
+from mcp import registry as mcp_registry
+import routes
 import server
 from fastapi.routing import APIRoute
 from routing import route_definitions
 
 
 class ProcessSplitContractTests(unittest.TestCase):
+    def test_fusion_package_imports_need_only_the_standard_library(self) -> None:
+        # -S removes site-packages so an accidental FastAPI/numpy dependency
+        # in a package initializer fails even on a fully provisioned machine.
+        result = subprocess.run(
+            [sys.executable, "-S", "-c", "import adapter, routes, mcp.tools; "
+             "import sys; assert 'mcp.endpoint' not in sys.modules"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_adapter_has_no_http_framework_or_listener_surface(self) -> None:
         source = Path(adapter.__file__).read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -61,7 +75,7 @@ class ProcessSplitContractTests(unittest.TestCase):
 
     def test_routes_use_context_first_typed_parameters(self) -> None:
         operations = [definition.operation for definition in route_definitions()]
-        operations.append(fusion_routes.fusion_status)
+        operations.append(routes.fusion_status)
         for operation in operations:
             with self.subTest(operation=operation.__name__):
                 parameters = list(inspect.signature(operation).parameters.values())
@@ -70,7 +84,7 @@ class ProcessSplitContractTests(unittest.TestCase):
                                     for parameter in parameters[1:]))
 
     def test_mcp_operations_keep_the_query_context_interface(self) -> None:
-        for definition in mcp_tools.tool_definitions():
+        for definition in mcp_registry.tool_definitions():
             with self.subTest(operation=definition.operation.__name__):
                 parameters = list(inspect.signature(definition.operation).parameters)
                 self.assertEqual(parameters, ["query", "context"])

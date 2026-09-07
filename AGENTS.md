@@ -15,15 +15,16 @@ split across a built-in-only Fusion adapter and a FastAPI child process. See
 - `server.py` is the child process. It owns FastAPI, Uvicorn, the localhost
   listener, HTTP request/response handling, lifecycle endpoints, and the MCP
   endpoint. Its pinned third-party dependencies are in `requirements.txt`.
-- `fusion_routes.py` contains Fusion-backed HTTP implementations. Each route's
-  path and metadata are declared beside its implementation with
-  `routing.api_route`.
+- `routes/` contains one module per Fusion-backed HTTP route. Each path and
+  its metadata are declared beside the implementation with `routing.api_route`.
+  `routes/__init__.py` explicitly imports the operations to register.
 - `routing.py` is the built-in-only route-definition interface shared across
   the process seam. `server.py` installs its `route_definitions()`
   automatically.
-- `mcp_tools.py` owns MCP declarations, Fusion-side implementations, inventory,
-  validation, and dispatch. Each tool is declared with `mcp_tool` beside its
-  implementation.
+- `mcp/registry.py` owns MCP declarations, inventory, validation, and dispatch.
+  Each tool in `mcp/tools/` is declared with `mcp_tool` beside its implementation;
+  `mcp/tools/__init__.py` explicitly imports the tools. `mcp/endpoint.py` owns
+  the child-only HTTP endpoint and JSON-RPC handling.
 - `context.py` defines the explicit `@fusion` and `@server` process-boundary
   registrations and supported value serialization. `bridge.py` implements the
   framed transport.
@@ -35,8 +36,9 @@ unsafe, so the service must remain local-only.
 ## Adding a Fusion-backed HTTP route
 
 Use the `fusionheadless-new-route` skill when it is available. A normal
-Fusion-backed route requires one edit: add or change one decorated function in
-`fusion_routes.py`. `server.py` derives its FastAPI registration from that
+Fusion-backed route lives in one module under `routes/`. Add or change its
+decorated function there; for a new module, add an explicit operation import in
+`routes/__init__.py`. `server.py` derives its FastAPI registration from that
 declaration and should not be edited.
 
 ```python
@@ -58,10 +60,11 @@ derive their schemas from that signature. Use `routing.ApiParameter` inside
 ## Adding an MCP tool
 
 Use the `fusionheadless-new-mcp-tool` skill when it is available. Add one
-`@mcp_tool` declaration beside its implementation in `mcp_tools.py`. The tool
-inventory, required argument validation, and bridge dispatch are derived
-automatically. Do not add a second metadata table, registration edit, or string
-copy of the operation name.
+`@mcp_tool` declaration beside its implementation in `mcp/tools/<name>.py`,
+importing the decorator from `mcp.registry`. Import new tools explicitly in
+`mcp/tools/__init__.py`. The tool inventory, required argument validation, and bridge dispatch are derived
+automatically. Do not add a second metadata table or a string copy of the
+operation name.
 
 ## Process-boundary context
 
@@ -105,7 +108,7 @@ Run from the repository root:
 
 ```text
 python -c "import os,pathlib,sys,unittest; d=str(pathlib.Path('.scratch/deps').resolve()); os.environ['PYTHONPATH']=d+os.pathsep+os.environ.get('PYTHONPATH',''); sys.path.insert(0,d); r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover('tests')); raise SystemExit(0 if r.wasSuccessful() else 1)"
-python -m compileall -q FusionHeadless.py adapter.py bridge.py context.py fusion_host.py server.py fusion_routes.py mcp_tools.py routing.py fusion_invocation.py versioning.py cli tests
+python -m compileall -q FusionHeadless.py adapter.py bridge.py context.py fusion_host.py server.py routes mcp fusion_support.py extension_state.py routing.py fusion_invocation.py versioning.py cli tests
 git diff --check
 ```
 
@@ -118,6 +121,6 @@ lifecycle replacement, recovery, and shutdown.
 - `README.md` — architecture, setup, endpoints, and behavior
 - `adapter.py` — Fusion-side lifecycle and UI-thread execution
 - `server.py` — child HTTP and MCP protocol handling
-- `routing.py` and `fusion_routes.py` — Fusion-backed HTTP extension interface
-- `mcp_tools.py` — MCP extension interface and implementations
+- `routing.py` and `routes/` — Fusion-backed HTTP extension interface
+- `mcp/registry.py` and `mcp/tools/` — MCP extension interface and implementations
 - `tests/` — executable contracts and examples

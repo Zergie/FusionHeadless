@@ -9,8 +9,9 @@ from urllib.request import Request, urlopen
 from adapter import FusionAdapter
 from context import FusionContext, registry
 from fusion_invocation import FusionOperationInvoker
-from mcp_tools import call_tool, tool_definitions, tool_inventory
+from mcp.registry import call_tool, tool_definitions, tool_inventory
 import server
+from mcp.endpoint import mcp
 from tests.harness import FakeFusionHost, route_path
 
 
@@ -27,7 +28,7 @@ class McpRouteTests(unittest.TestCase):
 
     def post(self, payload: object) -> dict:
         request = Request(
-            f"http://127.0.0.1:{self.port}{route_path(server.mcp)}",
+            f"http://127.0.0.1:{self.port}{route_path(mcp)}",
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",

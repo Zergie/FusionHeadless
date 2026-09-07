@@ -7,7 +7,7 @@ import unittest
 from urllib.request import urlopen
 
 from adapter import FusionAdapter
-import fusion_routes
+import routes
 from tests.harness import FakeFusionHost, route_path
 
 
@@ -87,7 +87,7 @@ def body_fixture() -> SimpleNamespace:
 
 class BodySerializationTests(unittest.TestCase):
     def test_body_payload_matches_main_contract(self) -> None:
-        self.assertEqual(fusion_routes._body_dict(body_fixture()), EXPECTED_BODY)
+        self.assertEqual(routes._bodies._body_dict(body_fixture()), EXPECTED_BODY)
 
     def test_unreadable_build_plate_normal_is_ignored(self) -> None:
         body = body_fixture()
@@ -97,7 +97,7 @@ class BodySerializationTests(unittest.TestCase):
             isParamReversed=False,
         )]
 
-        self.assertEqual(fusion_routes._body_dict(body)["orientation"], [])
+        self.assertEqual(routes._bodies._body_dict(body)["orientation"], [])
 
 
 class BodyRouteHost(FakeFusionHost):
@@ -132,7 +132,7 @@ class BodyRouteTests(unittest.TestCase):
             return json.load(response)
 
     def test_bodies_endpoint_matches_main_body_contract(self) -> None:
-        response = self.request(fusion_routes.bodies_route)
+        response = self.request(routes.bodies_route)
 
         self.assertEqual(response, {
             "status": "ok",
@@ -142,7 +142,7 @@ class BodyRouteTests(unittest.TestCase):
         })
 
     def test_components_endpoint_matches_main_body_contract(self) -> None:
-        response = self.request(fusion_routes.components_route)
+        response = self.request(routes.components_route)
 
         self.assertEqual(response, {
             "status": "ok",

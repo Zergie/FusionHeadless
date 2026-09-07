@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from context import FusionContext
-from mcp_tools import mcp_search_components
+from mcp.tools.search_components import mcp_search_components
 
 
 class Collection:

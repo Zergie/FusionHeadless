@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from adapter import FusionAdapter
-import fusion_routes
+import routes
 from tests.harness import FakeFusionHost, route_path
 
 
@@ -189,16 +189,16 @@ class MutationRouteTests(unittest.TestCase):
 
     def test_document_open_and_close_cross_boundary(self):
         status, opened = self.request(
-            route_path(fusion_routes.document_route), {"open": "file-1"}
+            route_path(routes.document_route), {"open": "file-1"}
         )
         self.assertEqual((status, opened["result"]), (200, "File is already active."))
         self.host.app.activeDocument = None
         status, opened = self.request(
-            route_path(fusion_routes.document_route), {"open": "file-1"}
+            route_path(routes.document_route), {"open": "file-1"}
         )
         self.assertEqual((status, opened["result"]), (200, "File opened successfully."))
         status, closed = self.request(
-            route_path(fusion_routes.document_route), {"close": True}
+            route_path(routes.document_route), {"close": True}
         )
         self.assertEqual((status, closed["result"]), (200, "File closed successfully."))
         self.assertTrue(self.host.app.activeDocument.closed_with)
@@ -207,7 +207,7 @@ class MutationRouteTests(unittest.TestCase):
         active = self.host.app.activeDocument
 
         status, result = self.request(
-            route_path(fusion_routes.document_route),
+            route_path(routes.document_route),
             {"open": "file-1", "close": True},
         )
 
@@ -219,7 +219,7 @@ class MutationRouteTests(unittest.TestCase):
         self.host.app.documents.defer_open = True
 
         status, opened = self.request(
-            route_path(fusion_routes.document_route), {"open": "file-1"}
+            route_path(routes.document_route), {"open": "file-1"}
         )
 
         self.assertEqual((status, opened["result"]), (200, "File opened successfully."))
@@ -236,9 +236,9 @@ class MutationRouteTests(unittest.TestCase):
             awaitable.close()
             raise asyncio.TimeoutError()
 
-        with patch.object(fusion_routes.asyncio, "wait_for", timeout_immediately):
+        with patch.object(routes.documents.asyncio, "wait_for", timeout_immediately):
             status, payload = self.request_error(
-                route_path(fusion_routes.document_route), {"open": "file-1"}
+                route_path(routes.document_route), {"open": "file-1"}
             )
 
         self.assertEqual(observed_timeouts, [30])
@@ -260,7 +260,7 @@ class MutationRouteTests(unittest.TestCase):
         ):
             with self.subTest(values=values):
                 status, payload = self.request_error(
-                    route_path(fusion_routes.document_route), values
+                    route_path(routes.document_route), values
                 )
 
                 self.assertEqual(status, 500)
@@ -274,7 +274,7 @@ class MutationRouteTests(unittest.TestCase):
 
     def test_parameter_update_returns_coerced_value(self):
         status, result = self.request(
-            route_path(fusion_routes.parameter_route), {"set": ["d1=3.5"]}
+            route_path(routes.parameter_route), {"set": ["d1=3.5"]}
         )
         self.assertEqual(status, 200)
         self.assertEqual(result["result"], {"d1": "3.5"})
@@ -282,7 +282,7 @@ class MutationRouteTests(unittest.TestCase):
 
     def test_select_changes_observable_fusion_state(self):
         status, result = self.request(
-            route_path(fusion_routes.select_route), {"id": "component-1"}
+            route_path(routes.select_route), {"id": "component-1"}
         )
         self.assertEqual((status, result["result"]),
                          (200, {"id": "component-1", "name": "Bracket"}))

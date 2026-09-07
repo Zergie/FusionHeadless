@@ -6,9 +6,10 @@ argument-hint: Tool name and the Fusion operation it should perform
 
 # Add an MCP tool
 
-Add, remove, or rename a tool in one place: `mcp_tools.py`. The module derives
-the client inventory and bridge dispatch from each decorated implementation;
-`server.py` already serves them through `/mcp`.
+Add, remove, or rename a tool in its module under `mcp/tools/`. Import new
+tools explicitly in `mcp/tools/__init__.py`. The `mcp.registry` module derives
+client inventory and bridge dispatch from each decorated implementation;
+`mcp/endpoint.py` serves them through `/mcp` in the child process.
 
 ## Decorator interface
 
@@ -16,6 +17,9 @@ Declare the external name, description, and JSON input schema immediately
 beside the implementation:
 
 ```python
+from mcp.registry import mcp_tool
+
+
 @mcp_tool(
     name,
     description="One concise client-facing description.",
@@ -34,13 +38,16 @@ def mcp_operation(query: dict[str, Any], context: Any) -> dict[str, Any]:
   function name drives bridge dispatch automatically.
 
 Do not add a parallel metadata dictionary, a separate required-arguments list,
-a string copy of the operation name, or another registration step.
+a string copy of the operation name, or a manual dispatch entry.
 
 ## Current example
 
-This declaration is copied from `mcp_tools.py`:
+This declaration is copied from `mcp/tools/list_documents.py`:
 
 ```python
+from mcp.registry import mcp_tool
+
+
 @mcp_tool(
     "list_open_documents",
     description="List all currently open Fusion 360 documents.",
@@ -66,16 +73,17 @@ presence checks are insufficient.
 
 ## Workflow
 
-1. Read the existing definitions and helpers in `mcp_tools.py`.
+1. Read the existing definitions and helpers in `mcp/tools/`.
 2. Add one decorated implementation with its complete external metadata.
-3. Add characterization and dispatch tests in `tests/test_mcp.py`. Derive
+3. Import the operation in `mcp/tools/__init__.py` if its module is new.
+4. Add characterization and dispatch tests in `tests/test_mcp.py`. Derive
    expectations from `tool_definitions()` or `tool_inventory()` where the
    contract should follow declarations.
-4. Confirm `tools/list` includes the declaration and `tools/call` invokes the
+5. Confirm `tools/list` includes the declaration and `tools/call` invokes the
    decorated operation.
 
-Do not edit `server.py` for a normal tool addition. Do not create a discovery
-directory or make filenames part of the public contract.
+Do not edit `server.py` for a normal tool addition. Use explicit package imports; do not scan directories to discover tools or
+make filenames part of the public contract.
 
 ## Verification
 
@@ -83,7 +91,7 @@ Run the complete suite from the repository root:
 
 ```text
 python -c "import os,pathlib,sys,unittest; d=str(pathlib.Path('.scratch/deps').resolve()); os.environ['PYTHONPATH']=d+os.pathsep+os.environ.get('PYTHONPATH',''); sys.path.insert(0,d); r=unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover('tests')); raise SystemExit(0 if r.wasSuccessful() else 1)"
-python -m compileall -q adapter.py bridge.py context.py server.py fusion_routes.py mcp_tools.py routing.py tests
+python -m compileall -q adapter.py bridge.py context.py server.py routes mcp fusion_support.py extension_state.py routing.py tests
 git diff --check
 ```
 
@@ -92,7 +100,8 @@ return wrapping, and invalid-input behavior.
 
 ## References
 
-- `mcp_tools.py` — `mcp_tool`, inventory, dispatch, and implementations
-- `server.py` — JSON-RPC protocol endpoint
+- `mcp/registry.py` — `mcp_tool`, inventory, validation, and dispatch
+- `mcp/tools/` — one decorated implementation per module
+- `mcp/endpoint.py` — child-only JSON-RPC protocol endpoint
 - `tests/test_mcp.py` — declaration and protocol contracts
 - `tests/test_contract.py` — process-dependency boundary

@@ -29,6 +29,41 @@ contract at `/openapi.json`. `/exec` accepts `{"code": "..."}`; its code is a
 function body, so use `return` to produce a result. Single-line and multiline
 code are supported.
 
+## Export to an application URL
+
+`POST /export` accepts an optional `redirect_url` template. For example:
+
+```json
+{
+  "format": "stl",
+  "redirect_url": "orcaslicer://open?file={url}"
+}
+```
+
+The template must be an absolute URL containing exactly one literal `{url}`.
+Other application schemes are supported as well. After export succeeds, the
+server replaces `{url}` with a percent-encoded local download URL and responds
+with `303 See Other` and a `Location` header. Omitting `redirect_url`, or setting
+it to `null`, preserves the ordinary binary response. Invalid templates return
+`422` before Fusion exports anything.
+
+The child retains the exported bytes in memory for **five minutes**, with a
+random token at `GET /downloads/{token}/{filename}`. The first GET atomically
+consumes the token; subsequent requests return `404`. An interrupted download
+also consumes the token, so retry by exporting again. Unclaimed exports are
+automatically removed at expiry; restarting the child invalidates all tokens.
+Redirects and downloads use `Cache-Control: no-store`.
+
+The token maps directly to the file bytes and explicit filename metadata.
+The server generates the response header and URL from that filename; it does
+not reconstruct filenames from headers. Expiry runs on the HTTP event loop.
+
+Open the redirect target through a browser navigation or the operating system's
+URL handler. Following it with `fetch()` or an HTTP CLI does not launch an
+application. The application must have its URL scheme registered and be able
+to fetch the loopback URL on the same computer; browsers may prompt before
+opening it. No application is launched by the server itself.
+
 A Fusion-backed route is added, removed, or changed in one place. The
 built-in-only `@api_route` decorator registers the Fusion operation and gives
 the FastAPI child everything it needs to install the HTTP route:
@@ -52,9 +87,10 @@ Content-Type: application/json
 serialization. Both endpoints execute in Fusion and return useful syntax or
 runtime errors. `POST /restart` resets the Fusion extension context before
 replacing the FastAPI child: runtime registrations, route declarations, MCP
-tools, and extension-module state are discarded, then `fusion_routes` and
-`mcp_tools` are imported fresh. The response is completed before the child
-exits. New requests receive `503` with `Retry-After: 1` until the replacement
+tools, and extension-module state are discarded, then the `routes` and `mcp.tools`
+packages, their submodules, and shared `fusion_support` helpers are imported
+fresh. Their explicit package imports determine which operations are loaded.
+The response is completed before the child exits. New requests receive `503` with `Retry-After: 1` until the replacement
 is ready with a matching extension fingerprint. Send
 `{"show_terminal": true}` to start the replacement child with a visible
 Windows terminal for debugging; the default is hidden.

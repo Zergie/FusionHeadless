@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from adapter import FusionAdapter
-import fusion_routes
+import routes
 from tests.harness import FakeFusionHost, route_path
 
 
@@ -293,7 +293,7 @@ class BinaryRouteTests(unittest.TestCase):
         for format_name in ("f3d", "step", "stl", "3mf", "obj"):
             with self.subTest(format=format_name):
                 status, headers, body = self.request(
-                    route_path(fusion_routes.export_route), {"format": format_name}
+                    route_path(routes.export_route), {"format": format_name}
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(headers["content-type"], "application/octet-stream")
@@ -318,7 +318,7 @@ class BinaryRouteTests(unittest.TestCase):
 
                     manager.execute = fail
                     with self.assertRaises(HTTPError) as caught:
-                        self.request(route_path(fusion_routes.export_route), {"format": format_name})
+                        self.request(route_path(routes.export_route), {"format": format_name})
                     with caught.exception as response:
                         self.assertEqual(response.code, 500)
                         error = json.load(response)["error"]
@@ -366,10 +366,10 @@ class BinaryRouteTests(unittest.TestCase):
                             values = {"format": format_name, "component": "part-id",
                                       "body": ["First", "Second"]}
                             if failure is None:
-                                self.assertEqual(self.request(route_path(fusion_routes.export_route), values)[0], 200)
+                                self.assertEqual(self.request(route_path(routes.export_route), values)[0], 200)
                             else:
                                 with self.assertRaises(HTTPError) as caught:
-                                    self.request(route_path(fusion_routes.export_route), values)
+                                    self.request(route_path(routes.export_route), values)
                                 with caught.exception as response:
                                     self.assertEqual(response.code, 500)
                     self.assertEqual([item.isLightBulbOn for item in items], initial)
@@ -393,7 +393,7 @@ class BinaryRouteTests(unittest.TestCase):
                          {"body": ["Visible", "Missing"]}):
             with self.subTest(selector=selector):
                 with self.assertRaises(HTTPError) as caught:
-                    self.request(route_path(fusion_routes.export_route), selector)
+                    self.request(route_path(routes.export_route), selector)
                 with caught.exception as response:
                     self.assertEqual(response.code, 500)
                     error = json.load(response)["error"]
@@ -403,7 +403,7 @@ class BinaryRouteTests(unittest.TestCase):
                     self.assertIn("Missing", error)
 
     def test_render_is_exact_png_and_applies_dimensions(self):
-        status, headers, body = self.request(route_path(fusion_routes.render_route), {
+        status, headers, body = self.request(route_path(routes.render_route), {
             "quality": "ShadedWithVisibleEdgesOnly", "width": 320, "height": 200,
         })
         self.assertEqual(status, 200)
@@ -432,13 +432,13 @@ class BinaryRouteTests(unittest.TestCase):
                     with patch.object(viewport, "saveAsImageFileWithOptions", side_effect=capture):
                         if fail_capture:
                             with self.assertRaises(HTTPError) as caught:
-                                self.request(route_path(fusion_routes.render_route), {"quality": quality})
+                                self.request(route_path(routes.render_route), {"quality": quality})
                             with caught.exception as response:
                                 self.assertEqual(response.code, 500)
                                 self.assertIn("capture failed", json.load(response)["error"])
                         else:
                             status, _, _ = self.request(
-                                route_path(fusion_routes.render_route), {"quality": quality},
+                                route_path(routes.render_route), {"quality": quality},
                             )
                             self.assertEqual(status, 200)
                     self.assertEqual(captured_styles, [expected])
@@ -448,7 +448,7 @@ class BinaryRouteTests(unittest.TestCase):
         camera_control = self.host.ui.commandDefinitions.controls["ViewCameraCommand"]
         visibility_control = self.host.ui.commandDefinitions.controls["VisibilityOverrideCommand"]
 
-        status, _, _ = self.request(route_path(fusion_routes.render_route), {
+        status, _, _ = self.request(route_path(routes.render_route), {
             "quality": "ShadedWithVisibleEdgesOnly",
             "view": "Render_1",
             "focalLength": 100,
@@ -470,7 +470,7 @@ class BinaryRouteTests(unittest.TestCase):
         self.assertEqual(visibility_control.listItems.selected(), [True, False])
 
     def test_render_applies_local_render_exposure_and_custom_resolution(self):
-        status, _, body = self.request(route_path(fusion_routes.render_route), {
+        status, _, body = self.request(route_path(routes.render_route), {
             "quality": 50,
             "exposure": 8.2,
             "width": 640,
@@ -501,7 +501,7 @@ class BinaryRouteTests(unittest.TestCase):
         })()
         self.host.app.activeProduct.rootComponent.allOccurrences = [occurrence]
 
-        status, _, _ = self.request(route_path(fusion_routes.render_route), {
+        status, _, _ = self.request(route_path(routes.render_route), {
             "quality": "ShadedWithVisibleEdgesOnly",
             "isolate": ["Direct Drive x4"],
         })
@@ -540,7 +540,7 @@ class BinaryRouteTests(unittest.TestCase):
         for request_values in (values, dict(reversed(list(values.items())))):
             with self.subTest(request_order=list(request_values)):
                 status, _, _ = self.request(
-                    route_path(fusion_routes.render_route), request_values,
+                    route_path(routes.render_route), request_values,
                 )
 
                 self.assertEqual(status, 200)
@@ -551,7 +551,7 @@ class BinaryRouteTests(unittest.TestCase):
 
     def test_unsupported_export_format_returns_json_error(self):
         request = Request(
-            f"http://127.0.0.1:{self.port}{route_path(fusion_routes.export_route)}",
+            f"http://127.0.0.1:{self.port}{route_path(routes.export_route)}",
             data=b'{"format":"pdf"}',
             headers={"Content-Type": "application/json"}, method="POST",
         )

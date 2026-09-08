@@ -17,28 +17,62 @@ def _uuid_hash(value: str) -> str:
     return f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:]}"
 
 
+def _array_signature(value: Any, label: str) -> tuple[float, ...]:
+    values = _value(value, "asArray")
+    if not callable(values):
+        return ()
+    try:
+        return tuple(_round(item, 5) for item in values())
+    except Exception as error:
+        raise RuntimeError(f"Failed to read {label}: {error}") from error
+
+
+def _face_appearance_signatures(body: Any) -> list[tuple[Any, ...]]:
+    """Bind every face appearance to stable geometric properties for hashing."""
+    signatures = []
+    body_name = str(_value(body, "name", ""))
+    for index, face in enumerate(_value(body, "faces", []) or []):
+        geometry = _value(face, "geometry")
+        bounding = _value(face, "boundingBox")
+        label = f"body {body_name!r} face {index}"
+        signatures.append((
+            str(_value(_value(face, "appearance"), "name", "")),
+            str(_value(geometry, "objectType", "")),
+            str(_value(geometry, "surfaceType", "")),
+            bool(_value(face, "isParamReversed", False)),
+            _array_signature(_value(geometry, "normal"), f"{label} normal"),
+            _array_signature(_value(geometry, "origin"), f"{label} origin"),
+            _array_signature(_value(bounding, "minPoint"), f"{label} minimum"),
+            _array_signature(_value(bounding, "maxPoint"), f"{label} maximum"),
+            _round(_value(face, "area", 0), 5),
+        ))
+    return sorted(signatures, key=repr)
+
+
 def _body_orientation(body: Any) -> list[tuple[float, ...]]:
     orientations: set[tuple[float, ...]] = set()
-    for face in _value(body, "faces", []) or []:
+    body_name = str(_value(body, "name", ""))
+    for index, face in enumerate(_value(body, "faces", []) or []):
         appearance_name = _value(_value(face, "appearance"), "name")
         if not isinstance(appearance_name, str) or "Build Plate" not in appearance_name:
             continue
-        normal_array = _value(_value(_value(face, "geometry"), "normal"), "asArray")
-        if not callable(normal_array):
+        normal = _array_signature(
+            _value(_value(face, "geometry"), "normal"),
+            f"body {body_name!r} face {index} normal",
+        )
+        if not normal:
             continue
-        try:
-            values = normal_array()
-            reversed_normal = bool(_value(face, "isParamReversed", False))
-            orientations.add(tuple(
-                _round(-value if reversed_normal else value, 5)
-                for value in values
-            ))
-        except Exception:
-            continue
+        reversed_normal = bool(_value(face, "isParamReversed", False))
+        orientations.add(tuple(
+            -value if reversed_normal else value
+            for value in normal
+        ))
     return list(orientations)
 
 
-def _body_dict(body: Any, **extra: Any) -> dict[str, Any]:
+def _body_dict(
+    body: Any, *, include_orientation: bool = True, **extra: Any,
+) -> dict[str, Any]:
     parent = _value(body, "parentComponent")
     name = str(_value(body, "name", ""))
     parent_id = str(_value(parent, "id", ""))
@@ -70,11 +104,16 @@ def _body_dict(body: Any, **extra: Any) -> dict[str, Any]:
         "area": _round(_value(physical, "area", 0), 5), "color": color,
         "centerOfMass": [_round(value, 3) for value in center],
         "material": _value(_value(body, "material"), "name"),
-        "orientation": _body_orientation(body),
         "boundingBox": {"min": [_round(value, 3) for value in minimum],
                          "max": [_round(value, 3) for value in maximum]},
     }
-    result["hash"] = _uuid_hash(str(result))
+    if include_orientation:
+        result["orientation"] = _body_orientation(body)
+    hash_input = {
+        **{key: value for key, value in result.items() if key != "orientation"},
+        "faceAppearances": _face_appearance_signatures(body),
+    }
+    result["hash"] = _uuid_hash(str(hash_input))
     result.update(extra)
     return result
 

@@ -8,7 +8,7 @@ from routing import ApiParameter, api_route
 from fusion_support import _value
 
 
-@api_route("/document", methods=("POST",))
+@api_route("/document", methods=("GET", "POST"))
 def document_route(
     context: Any,
     open: Annotated[
@@ -20,7 +20,7 @@ def document_route(
         ApiParameter("Close the active document and optionally save changes."),
     ] = None,
 ) -> Any:
-    """Perform the legacy document operation on Fusion's UI thread."""
+    """Inspect, open, or close the active Fusion document."""
     app, adsk = context.app, context.adsk
     if open is not None:
         identity = open.strip()
@@ -51,4 +51,13 @@ def document_route(
             return "File closed successfully."
         return "No active document to close."
     else:
-        raise ValueError("Document operation must specify open or close.")
+        active = _value(app, "activeDocument")
+        if active is None:
+            return None
+        file = _value(active, "dataFile")
+        return {
+            "id": _value(file, "id"),
+            "name": _value(active, "name"),
+            "isModified": bool(_value(active, "isModified")),
+            "isSaved": bool(_value(active, "isSaved")),
+        }

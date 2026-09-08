@@ -31,11 +31,16 @@ class FusionCliContractTests(unittest.TestCase):
             "scripts", "select", "status",
         })
         self.assertEqual(set(self.commands["files"].operations), {"get"})
+        self.assertEqual(set(self.commands["document"].operations), {"get", "post"})
+        self.assertEqual(
+            fusion_cli._choose_operation(self.commands["document"], {}).method,
+            "get",
+        )
         self.assertEqual(set(self.commands["render"].operations), {"post"})
         self.assertEqual(set(self.commands["parameter"].operations), {"get", "post"})
         self.assertEqual(set(self.commands["scripts"].operations), {"get", "post"})
         self.assertEqual(fusion_cli.powershell_verbs(self.document),
-                         sorted((*self.commands, "cli")))
+                         sorted(self.commands))
 
     def test_openapi_parameters_drive_native_cli_and_powershell_names(self) -> None:
         render = self.commands["render"]
@@ -88,6 +93,24 @@ class FusionCliContractTests(unittest.TestCase):
         self.assertEqual(fusion_cli._choose_operation(command, {}).method, "get")
         operation = fusion_cli._choose_operation(command, {"set": ["d1=3.5"]})
         self.assertEqual(operation.method, "post")
+
+    def test_components_exposes_lightweight_filters_and_export_details(self) -> None:
+        command = self.commands["components"]
+        parser = fusion_cli.build_parser(self.commands)
+        namespace = parser.parse_args([
+            "components", "--name", "Latch", "--root", "Assembly:1",
+            "--max-depth", "2", "--no-visible", "--details",
+            "--include-transform",
+        ])
+
+        self.assertEqual(fusion_cli._arguments_for_command(namespace, command), {
+            "name": "Latch",
+            "root": "Assembly:1",
+            "max_depth": 2,
+            "visible": False,
+            "details": True,
+            "include_transform": True,
+        })
 
     def test_exec_supports_inline_file_and_stdin_alternatives(self) -> None:
         command = self.commands["exec"]
@@ -159,17 +182,21 @@ class FusionCliContractTests(unittest.TestCase):
         self.assertTrue(load.call_args_list[1].kwargs["refresh"])
         self.assertEqual(request.call_args.args[3], {"newFlag": "ready"})
 
-    def test_cli_refreshes_schema_without_calling_an_endpoint(self) -> None:
+    def test_global_refreshes_schema_without_calling_an_endpoint(self) -> None:
         with patch.object(fusion_cli, "load_schema") as load:
-            self.assertEqual(fusion_cli.run(["cli", "--refresh"]), 0)
+            self.assertEqual(fusion_cli.run([
+                "--base-url", "HTTP://LOCALHOST:5000/", "--refresh",
+            ]), 0)
 
-        load.assert_called_once_with(fusion_cli.DEFAULT_BASE_URL, refresh=True)
+        load.assert_called_once_with("http://localhost:5000", refresh=True)
 
-    def test_cli_management_verb_exposes_refresh(self) -> None:
-        definitions = fusion_cli.powershell_parameters({}, "cli")
+    def test_help_lists_commands_without_generated_choice_inventory(self) -> None:
+        help_text = fusion_cli.build_parser(self.commands).format_help()
 
-        self.assertEqual([item["name"] for item in definitions], ["Refresh"])
-        self.assertEqual([item["flag"] for item in definitions], ["--refresh"])
+        positional = help_text.split("positional arguments:", 1)[1].split("options:", 1)[0]
+        self.assertNotIn("{" + ",".join(sorted(self.commands)) + "}", positional)
+        self.assertIn("render", positional)
+        self.assertIn("--refresh", help_text)
 
     def test_platform_wrappers_are_thin_and_keep_cli_in_its_own_venv(self) -> None:
         directory = Path(fusion_cli.__file__).parent
@@ -180,27 +207,39 @@ class FusionCliContractTests(unittest.TestCase):
         powershell = (directory / "fusion_cli.ps1").read_text(encoding="utf-8")
         self.assertIn("dynamicparam", powershell.lower())
         self.assertIn("RuntimeDefinedParameter", powershell)
+        for switch in ("Help", "Version", "Refresh", "Raw"):
+            self.assertIn(f"[switch] ${switch}", powershell)
         self.assertEqual(
             (directory / "requirements.txt").read_text(encoding="utf-8").splitlines(),
             ["jmespath==1.0.1", "Pygments==2.19.2"],
         )
 
-    def test_human_json_output_is_syntax_highlighted(self) -> None:
+    def test_human_json_output_is_syntax_highlighted_in_a_terminal(self) -> None:
         pygments = types.ModuleType("pygments")
         pygments.highlight = lambda source, lexer, formatter: "<color>" + source
         formatters = types.ModuleType("pygments.formatters")
         formatters.TerminalFormatter = object
         lexers = types.ModuleType("pygments.lexers")
         lexers.JsonLexer = object
-        with patch.dict(sys.modules, {
-            "pygments": pygments,
-            "pygments.formatters": formatters,
-            "pygments.lexers": lexers,
-        }):
+        with (
+            patch.object(sys.stdout, "isatty", return_value=True),
+            patch.dict(sys.modules, {
+                "pygments": pygments,
+                "pygments.formatters": formatters,
+                "pygments.lexers": lexers,
+            }),
+        ):
             formatted = fusion_cli._format_human_json({"status": "ok"})
 
         self.assertTrue(formatted.startswith("<color>"))
         self.assertIn('"status"', formatted)
+
+    def test_human_json_output_is_plain_when_stdout_is_not_a_terminal(self) -> None:
+        with patch.object(sys.stdout, "isatty", return_value=False):
+            formatted = fusion_cli._format_human_json({"status": "ok"})
+
+        self.assertEqual(formatted, '{\n  "status": "ok"\n}')
+        self.assertNotIn("\x1b", formatted)
 
     @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is not installed")
     def test_powershell_completes_verbs_and_boolean_switches_from_openapi(self) -> None:
@@ -245,6 +284,35 @@ class FusionCliContractTests(unittest.TestCase):
         self.assertIn("-IsAntiAliased", completions["switches"])
         self.assertNotIn("-AntiAliased", completions["switches"])
         self.assertNotIn("-NoAntiAliased", completions["switches"])
+
+    @unittest.skipUnless(shutil.which("pwsh"), "PowerShell is not installed")
+    def test_powershell_help_and_version_forward_to_the_python_cli(self) -> None:
+        cli_directory = Path(fusion_cli.__file__).parent
+        wrapper = str(cli_directory / "fusion_cli.ps1")
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"FUSION_HEADLESS_CACHE_DIR": directory}
+        ):
+            path = fusion_cli.schema_cache_path(fusion_cli.DEFAULT_BASE_URL, "0.2.0")
+            path.write_text(json.dumps(self.document), encoding="utf-8")
+            environment = os.environ.copy()
+            completed = subprocess.run(
+                [
+                    shutil.which("pwsh") or "pwsh", "-NoProfile", "-Command",
+                    f"& '{wrapper}' -Version; & '{wrapper}' -Help",
+                ],
+                cwd=Path(__file__).parents[1],
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        self.assertTrue(completed.stdout.startswith("0.2.0"))
+        self.assertIn("usage: fusion_cli", completed.stdout)
+        self.assertIn("--refresh", completed.stdout)
 
 
 if __name__ == "__main__":

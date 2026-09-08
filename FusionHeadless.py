@@ -8,6 +8,7 @@ from threading import RLock, Thread
 from typing import Any
 
 import adsk.core
+import adsk.fusion
 
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parent)
@@ -46,10 +47,12 @@ def stop(context: Any) -> None:
         host = _host
         _adapter = None
         _host = None
-    if host is not None:
-        host.close()
-    if adapter is not None:
-        adapter.stop()
+    try:
+        if adapter is not None:
+            adapter.stop_from_ui_thread()
+    finally:
+        if host is not None:
+            host.close()
 
 
 def _start_adapter(adapter: FusionAdapter, host: FusionHost) -> None:

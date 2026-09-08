@@ -141,6 +141,12 @@ class ProcessHarnessTests(unittest.TestCase):
     def test_child_exits_after_handler_failure_with_input_still_open(self) -> None:
         child = ChildProcessHarness(["-m", "server", "--port", "0"])
         self.addCleanup(child.close)
+        startup = child.read()
+        self.assertEqual(startup["command"], "startup")
+        child.write({"reply": True, "ok": True, "value": {"accepted": True}})
+        startup = child.read()
+        self.assertEqual(startup["command"], "exec")
+        child.write({"reply": True, "ok": True, "value": {"installed": False}})
         self.assertEqual(child.read()["command"], "ready")
         child.write({"command": "invalid-command"})
         self.assertNotEqual(child.process.wait(timeout=4), 0)
@@ -284,30 +290,46 @@ class AdapterExecTests(unittest.TestCase):
             method="POST",
         )
         with urlopen(request, timeout=5) as response:
-            self.assertEqual(response.read(), b'{"status":"ok","result":{"server":"Restarting.."}}')
+            self.assertEqual(response.read(), b'{"status":"ok","result":{"server":"Restarted"}}')
 
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if adapter.process is not None and adapter.process.pid != original_pid:
-                break
-            time.sleep(0.01)
         self.assertIsNotNone(adapter.process)
         self.assertNotEqual(adapter.process.pid, original_pid)
         self.assertNotIn("runtime_registration", registry.fusion)
         self.assertIsNot(routes.fusion_eval, original_route)
 
-        deadline = time.monotonic() + 5
-        while True:
-            try:
-                with urlopen(
-                    f"http://127.0.0.1:{port}{route_path(server.status)}", timeout=0.5
-                ) as response:
-                    self.assertEqual(response.status, 200)
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise
-                time.sleep(0.01)
+        with urlopen(
+            f"http://127.0.0.1:{port}{route_path(server.status)}", timeout=0.5
+        ) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_restart_can_replace_an_already_replaced_child(self) -> None:
+        host = FakeFusionHost()
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        adapter = FusionAdapter(host=host, port=port)
+        self.assertTrue(adapter.start(timeout=5))
+        self.addCleanup(adapter.stop)
+
+        for _ in range(2):
+            assert adapter.process is not None
+            retiring_pid = adapter.process.pid
+            request = Request(
+                f"http://127.0.0.1:{port}{route_path(server.restart)}",
+                data=b"",
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                self.assertEqual(
+                    response.read(), b'{"status":"ok","result":{"server":"Restarted"}}'
+                )
+            assert adapter.process is not None
+            self.assertNotEqual(adapter.process.pid, retiring_pid)
+            with urlopen(
+                f"http://127.0.0.1:{port}{route_path(server.status)}", timeout=0.5
+            ) as response:
+                self.assertEqual(response.status, 200)
 
     def test_exec_route_round_trips_return_value_through_real_child(self) -> None:
         host = FakeFusionHost()
@@ -318,6 +340,7 @@ class AdapterExecTests(unittest.TestCase):
         adapter = FusionAdapter(host=host, port=port)
         self.assertTrue(adapter.start(timeout=5))
         self.addCleanup(adapter.stop)
+        host.app.dispatched.clear()
 
         request = Request(
             f"http://127.0.0.1:{port}{route_path(server.execute)}",

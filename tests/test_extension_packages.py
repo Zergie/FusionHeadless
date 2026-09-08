@@ -15,7 +15,7 @@ class ExtensionPackageTests(unittest.TestCase):
             copy = Path(directory)
             for path in root.glob("*.py"):
                 shutil.copy2(path, copy / path.name)
-            for package in ("routes", "mcp"):
+            for package in ("routes", "mcp", "startup"):
                 shutil.copytree(root / package, copy / package,
                                 ignore=shutil.ignore_patterns("__pycache__"))
             result = subprocess.run(

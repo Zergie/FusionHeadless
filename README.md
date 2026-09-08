@@ -196,24 +196,34 @@ On macOS or Linux, use `python3 -m venv cli/.venv` and
 `cli/fusion_cli.sh`. This is a client option; Fusion still runs on its host.
 
 The CLI derives its verbs and switches from the server's OpenAPI schema.
-Use `cli --refresh` after updating the add-in:
+Use `--refresh` after updating the add-in:
 
 ```
-cli\fusion_cli.cmd cli --refresh
+cli\fusion_cli.cmd --refresh
 cli\fusion_cli.cmd render --view Home --hide "Body 1" --no-anti-aliased --output render.png
 cli\fusion_cli.cmd exec --file operation.py
+cli\fusion_cli.cmd components --name Latch --max-depth 2 --raw
 ```
 
-Use `--raw` for the unwrapped result, `--query` for JMESPath transformations,
-and `--output` to write a file. Binary responses use the server's filename when
-no output path is supplied; identical existing files are left untouched.
+Interactive JSON is pretty-printed and syntax-highlighted. Piped or redirected
+output is plain JSON without terminal colour codes. Use `--raw` for explicit,
+compact machine-readable output, `--query` for JMESPath transformations, and
+`--output` to write a file. Binary responses use the server's filename when no
+output path is supplied; identical existing files are left untouched.
 Set `FUSION_HEADLESS_URL` or `--base-url` to select the server origin.
+
+`components` includes assemblies without direct bodies and reports explicit
+occurrence paths with lightweight body names. Add `--details` when an export
+workflow needs body hashes and materials. The hash tracks face-appearance
+assignments so changing an export marker invalidates cached output without
+exposing marker-plane geometry. Name, root-path, depth, and visibility filters
+run inside Fusion; transforms are included only with `--include-transform`.
 
 <details>
 <summary>Schema caching and Git Bash</summary>
 
 The schema is cached by normalized server origin and the version in
-`FusionHeadless.manifest`. It is fetched when absent, on `cli --refresh`, or
+`FusionHeadless.manifest`. It is fetched when absent, on `--refresh`, or
 once after an unknown verb or switch. Git Bash can invoke the CLI Python script
 directly with its Windows virtual-environment interpreter.
 
@@ -230,8 +240,14 @@ execution semantics, and restart behavior.
 | Method | Routes |
 | --- | --- |
 | `GET` | `/status`, `/components`, `/bodies`, `/projects`, `/files` |
-| `GET`, `POST` | `/parameter`, `/scripts` |
-| `POST` | `/document`, `/select`, `/export`, `/render`, `/eval`, `/exec`, `/restart`, `/mcp` |
+| `GET`, `POST` | `/document`, `/parameter`, `/scripts` |
+| `POST` | `/select`, `/export`, `/render`, `/eval`, `/exec`, `/restart`, `/mcp` |
+
+Inspect the active document directly:
+
+```
+cli\fusion_cli.cmd document
+```
 
 For example, read the active document's name with a function body sent to `/exec`:
 
@@ -246,13 +262,32 @@ Use `return` to produce an `/exec` result. `/eval` evaluates an expression and
 can serialize Fusion objects with a depth limit. Both run inside Fusion.
 The typed API is **not wire-compatible** with the former free-form contract.
 
-`POST /restart` reloads route and MCP extensions, then replaces the child server.
-Requests receive `503` with `Retry-After: 1` until it is ready. Adapter and bridge
-infrastructure changes require restarting the add-in; `/reload` no longer exists.
+`POST /restart` reloads route and MCP extensions and warms a replacement child.
+The old child stops accepting only after that replacement is initialized, and the
+response is sent after the replacement has bound the HTTP port. Requests reaching
+the old child's middleware after restart begins receive `503` with `Retry-After: 1`.
+Adapter and bridge infrastructure changes require restarting the add-in; `/reload`
+no longer exists.
 
 <a id="print-oriented-stl-export"></a>
 
 ## <img src="assets/readme/section-stl-export.svg" width="100%" alt="Print-oriented STL export">
+
+In Fusion's Design workspace, **Utilities → Add-Ins → Export STL** opens the
+native export dialog. Select one or more bodies; each becomes a separate STL. Choose **Original** or **Appearance** orientation.
+The dialog's Appearance mode uses planar faces whose appearance name contains
+the case-sensitive text `Build Plate`. Each body is oriented independently.
+The active child installs the command from `startup/` and owns export batching,
+file staging, and slicer handoff. Fusion retains only the native UI adapter. A
+queued batch retains the active document and exact Fusion entity tokens, so it
+fails safely if the selection context changes before export begins.
+
+Choose **Export only** to use one Save As dialog: `part.stl`, `part_2.stl`,
+`part_3.stl`, and so on. Existing destination files require overwrite confirmation.
+Choose **Cura** or **OrcaSlicer** to open one application URL per body; the slicer's
+URL handler must be installed. All exports are prepared successfully before any
+files are saved or application URLs opened. Orientation and application
+preferences are remembered. Restart the add-in after installing the button code.
 
 Mark the planar bed-contact face of each selected body with an appearance,
 then pass that appearance name as `orient`:

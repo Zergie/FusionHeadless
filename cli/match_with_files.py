@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -44,36 +43,12 @@ def _suggested_name(component: dict, body: dict, accent_material: str) -> str:
     return name
 
 
-def _rotation(orientations: Any, label: str) -> str:
-    if not isinstance(orientations, (list, tuple)) or len(orientations) != 1:
-        raise ValueError(f"{label}: expected exactly one Build Plate orientation")
-    vector = orientations[0]
-    if not isinstance(vector, (list, tuple)) or len(vector) != 3:
-        raise ValueError(f"{label}: orientation must have three coordinates")
-    try:
-        x, y, z = (float(value) for value in vector)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"{label}: invalid orientation {vector!r}") from error
-    if not all(math.isfinite(value) for value in (x, y, z)) or math.hypot(x, y, z) == 0:
-        raise ValueError(f"{label}: orientation must be finite and nonzero")
-    # Sequential X then Y rotations send the build-plate normal to -Z.
-    # Axis-angle components are not Euler angles for oblique normals.
-    radius = math.hypot(y, z)
-    rx = math.degrees(math.atan2(y, z)) + 180 if radius else 0.0
-    if rx > 180:
-        rx -= 360
-    ry = math.degrees(math.atan2(x, radius))
-    rx, ry = (f"{round(value, 6) or 0:.6f}".rstrip("0").rstrip(".")
-              for value in (rx, ry))
-    return f"-rx {rx} -ry {ry} -rz 0"
-
-
 def match_with_files(data: dict, folder: str, base_material: str, accent_material: str) -> dict:
     """Match printed bodies to local paths without changing input or STL files.
 
-    Return the legacy mapping of UUID.json names to export records. Invalid
-    orientations, ambiguous matches and incompatible grouped bodies fail before
-    any output is written. Naming and unused-file diagnostics go to stderr.
+    Return the legacy mapping of UUID.json names to export records. Ambiguous
+    matches and incompatible grouped bodies fail before any output is written.
+    Naming and unused-file diagnostics go to stderr.
     """
     if not isinstance(data, dict):
         raise ValueError("Components must be a JSON object keyed by component ID")
@@ -91,9 +66,12 @@ def match_with_files(data: dict, folder: str, base_material: str, accent_materia
     result: dict[str, Any] = {}
     for component in data.values():
         if not isinstance(component, dict) or not all(
-            key in component for key in ("id", "name", "count", "bodies")
+            key in component for key in ("id", "name", "occurrences", "bodies")
         ):
-            raise ValueError("Each component requires id, name, count and bodies")
+            raise ValueError("Each component requires id, name, occurrences and bodies")
+        occurrences = component["occurrences"]
+        if not isinstance(occurrences, list):
+            raise ValueError(f"Component {component['name']!r}: occurrences must be a list")
         if re.search(r" \(\d+\)$", component["name"]):
             continue
         for body in component["bodies"]:
@@ -102,12 +80,14 @@ def match_with_files(data: dict, folder: str, base_material: str, accent_materia
                 raise ValueError(f"{label}: missing material")
             if body["material"] not in (base_material, accent_material):
                 continue
-            for key in ("id", "name", "hash"):
+            for key in ("name", "hash"):
                 if key not in body:
                     raise ValueError(f"{label}: missing {key}")
-            rotation = _rotation(body.get("orientation"), label)
-            suggested = _suggested_name(component, body, accent_material)
-            fallback = _suggested_name({**component, "name": body["name"]}, body, accent_material)
+            component_with_count = {**component, "count": len(occurrences)}
+            suggested = _suggested_name(component_with_count, body, accent_material)
+            fallback = _suggested_name(
+                {**component_with_count, "name": body["name"]}, body, accent_material
+            )
             candidates = (suggested, suggested.rsplit("/", 1)[-1], fallback)
             matches = []
             for candidate in candidates:
@@ -129,7 +109,7 @@ def match_with_files(data: dict, folder: str, base_material: str, accent_materia
             key = str2hash(path) + ".json"
             item = {
                 "id": key[:-5], "path": path, "bodies": [body["name"]],
-                "body_hashes": [body["hash"]], "rotation": rotation,
+                "body_hashes": [body["hash"]],
                 "component_id": component["id"], "component_name": component["name"],
                 "suggested_name": suggested,
             }
@@ -137,8 +117,6 @@ def match_with_files(data: dict, folder: str, base_material: str, accent_materia
                 previous = result[key]
                 if previous["component_id"] != item["component_id"]:
                     raise ValueError(f"{path}: matched different components {previous['component_name']!r} and {component['name']!r}")
-                if previous["rotation"] != rotation:
-                    raise ValueError(f"{label}: bodies sharing {path} have different orientations")
                 if previous["suggested_name"] != suggested:
                     raise ValueError(f"{label}: bodies sharing {path} have different suggested names or materials")
                 previous["bodies"].append(body["name"])

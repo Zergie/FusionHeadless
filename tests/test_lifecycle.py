@@ -22,16 +22,40 @@ import server
 from tests.harness import FakeFusionHost
 
 
+class BlockingInput:
+    def __init__(self, data: bytes):
+        self._stream = io.BytesIO(data)
+        self._closed = False
+        self._condition = threading.Condition()
+
+    @property
+    def closed(self):
+        return self._closed
+
+    def read(self, size=-1):
+        with self._condition:
+            value = self._stream.read(size)
+            while not value and not self._closed:
+                self._condition.wait()
+                value = self._stream.read(size)
+            return value
+
+    def close(self):
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+
 class ScriptedProcess:
     """A child-process adapter with deterministic incoming protocol messages."""
 
-    def __init__(self, messages, *, running=False):
+    def __init__(self, messages, *, running=False, blocking=False):
         output = io.BytesIO()
         frames = FramedConnection(io.BytesIO(), output)
         for message in messages:
             frames.write(message)
         self.stdin = io.BytesIO()
-        self.stdout = io.BytesIO(output.getvalue())
+        self.stdout = BlockingInput(output.getvalue()) if blocking else io.BytesIO(output.getvalue())
         self.stderr = io.BytesIO()
         self.returncode = None if running else 0
         self.terminated = False
@@ -118,12 +142,20 @@ class AdapterLifecycleTests(unittest.TestCase):
         prompt.assert_called_once()
 
     def test_replacement_resets_extensions_and_forwards_terminal_option(self):
-        children = [ScriptedProcess([self.ready, {"command": "restart", "show_terminal": True}, self.quit]),
-                    ScriptedProcess([self.ready, self.quit])]
+        standby_ready = {"command": "standby-ready", "fingerprint": extension_fingerprint()}
+        activated = {"reply": True, "ok": True, "value": {
+            "listening": True, "startup": False,
+        }}
+        children = [ScriptedProcess([
+            self.ready,
+            {"command": "restart", "show_terminal": True, "reply": True},
+            {"command": "activate_replacement", "reply": True},
+            self.quit,
+        ]), ScriptedProcess([standby_ready, activated], running=True, blocking=True)]
         with (patch("adapter.subprocess.Popen", side_effect=children) as launch,
               patch("adapter.reset_extensions", return_value=extension_fingerprint()) as reset):
             self.assertTrue(self.adapter.start())
-            self.wait_for(lambda: children[-1].stdout.closed)
+            self.wait_for(lambda: self.adapter.process is children[-1])
             self.adapter.stop()
         self.assertEqual(launch.call_count, 2)
         reset.assert_called_once()
@@ -131,9 +163,16 @@ class AdapterLifecycleTests(unittest.TestCase):
         if os.name == "nt":
             self.assertEqual(launch.call_args_list[0].kwargs["creationflags"], subprocess.CREATE_NO_WINDOW)
             self.assertNotIn("creationflags", launch.call_args_list[1].kwargs)
+        self.assertNotIn("--standby", launch.call_args_list[0].args[0])
+        self.assertIn("--standby", launch.call_args_list[1].args[0])
 
     def test_failed_reset_is_retried_before_launching_the_replacement(self):
-        children = [ScriptedProcess([self.ready, {"command": "restart"}, self.quit]),
+        children = [ScriptedProcess([
+                        self.ready, {"command": "restart"}, self.quit,
+                    ]),
+                    ScriptedProcess([
+                        {"command": "standby-ready", "fingerprint": extension_fingerprint()}
+                    ], running=True, blocking=True),
                     ScriptedProcess([self.ready, self.quit])]
         with (patch("adapter.subprocess.Popen", side_effect=children) as launch,
               patch("adapter.reset_extensions", side_effect=[RuntimeError("bad import"),
@@ -143,7 +182,27 @@ class AdapterLifecycleTests(unittest.TestCase):
             self.wait_for(lambda: children[-1].stdout.closed)
             self.adapter.stop()
         self.assertEqual(reset.call_count, 3)
+        self.assertEqual(launch.call_count, 3)
+
+    def test_standby_exit_before_ready_keeps_the_old_child_active(self):
+        children = [
+            ScriptedProcess([
+                self.ready,
+                {"command": "restart", "reply": True},
+            ], running=True, blocking=True),
+            ScriptedProcess([]),
+        ]
+        with (
+            patch("adapter.subprocess.Popen", side_effect=children) as launch,
+            patch("adapter.reset_extensions", return_value=extension_fingerprint()) as reset,
+        ):
+            self.assertTrue(self.adapter.start())
+            self.wait_for(lambda: children[1].stdout.closed)
+            self.assertIs(self.adapter.process, children[0])
+            self.adapter.stop()
+
         self.assertEqual(launch.call_count, 2)
+        reset.assert_not_called()
 
     def test_initial_fingerprint_mismatch_terminates_child_without_recovery(self):
         child = ScriptedProcess([{"command": "ready", "fingerprint": "mismatch"}], running=True)
@@ -188,6 +247,35 @@ class AdapterLifecycleTests(unittest.TestCase):
         self.assertTrue(child.stdin.closed and child.stdout.closed)
         self.assertIsNone(self.adapter.process)
         self.assertEqual(popen.call_count, 1)
+
+    def test_stop_during_replacement_launch_cleans_the_late_standby(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        active = ScriptedProcess([self.ready, {"command": "restart", "reply": True}], running=True)
+        standby = ScriptedProcess([], running=True, blocking=True)
+        launches = 0
+
+        def launch(*args, **kwargs):
+            nonlocal launches
+            launches += 1
+            if launches == 1:
+                return active
+            entered.set()
+            if not release.wait(2):
+                raise RuntimeError("test did not release replacement launch")
+            return standby
+
+        with patch("adapter.subprocess.Popen", side_effect=launch) as popen:
+            self.assertTrue(self.adapter.start())
+            self.assertTrue(entered.wait(1))
+            self.adapter.stop(timeout=0.01)
+            release.set()
+            self.wait_for(lambda: standby.stdout.closed)
+            self.adapter.stop()
+
+        self.assertTrue(standby.stdin.closed and standby.stdout.closed and standby.stderr.closed)
+        self.assertIsNone(self.adapter.process)
+        self.assertEqual(popen.call_count, 2)
 
     def test_start_failure_can_be_followed_by_a_new_start(self):
         child = ScriptedProcess([self.ready, self.quit])
@@ -314,10 +402,12 @@ class ServerLifecycleTests(unittest.TestCase):
                 with patch.object(server, "_runtime", runtime):
                     response = asyncio.run(server.restart(background, server.RestartRequest(show_terminal=True)))
                 conversation.restart.assert_called_once_with("restart", show_terminal=True)
+                if failure is None:
+                    conversation.activate_replacement.assert_called_once_with()
                 conversation.close.assert_not_called()
                 self.assertTrue(runtime.restarting)
                 if failure is None:
-                    self.assertEqual(response, {"status": "ok", "result": {"server": "Restarting.."}})
+                    self.assertEqual(response, {"status": "ok", "result": {"server": "Restarted"}})
                 else:
                     self.assertEqual(response.status_code, 500)
                 asyncio.run(background())
@@ -334,6 +424,16 @@ class ServerLifecycleTests(unittest.TestCase):
         self.assertFalse(runtime.restarting)
         asyncio.run(background())
         conversation.close.assert_not_called()
+
+    def test_second_restart_is_rejected_after_replacement_begins(self):
+        conversation = Mock()
+        runtime = server.ServerRuntime(server.app, conversation)
+
+        runtime.request_restart()
+        with self.assertRaisesRegex(RuntimeError, "already in progress"):
+            runtime.request_restart()
+
+        conversation.restart.assert_called_once_with("restart", show_terminal=False)
 
     def test_runtime_requires_a_connection_and_preserves_syntax_errors(self):
         runtime = server.ServerRuntime(server.app)

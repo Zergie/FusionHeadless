@@ -12,12 +12,14 @@ The child exposes the migrated public routes:
 ```
 
 Read-only routes use `GET`: `/status`, `/components`, `/bodies`, `/projects`,
-`/files`, and `/scripts`. Mutating or computational routes use `POST` with a JSON object:
-`/document`, `/select`, `/export`, `/render`, `/eval`, `/exec`, `/restart`, and
-`/mcp`. `/parameter` and `/scripts` deliberately support both: `GET` lists their
-resources and `POST` changes them. `/parameter` updates values with a `set` array
-containing `NAME=EXPRESSION` strings. `/scripts` returns separate `scripts` and
-`addons` arrays from Fusion's script collection. It accepts `enable` and `disable`
+`/files`, `/document`, and `/scripts`. Mutating or computational routes use `POST`
+with a JSON object: `/document`, `/select`, `/export`, `/render`, `/eval`, `/exec`,
+`/restart`, and `/mcp`. `GET /document` reports the active document's ID, name,
+modified state, and saved state, or `null` when no document is active. Its POST
+operation opens or closes documents. `/parameter` and `/scripts` deliberately
+support both methods. `/parameter` updates values with a `set` array containing
+`NAME=EXPRESSION` strings. `/scripts` returns separate `scripts` and `addons`
+arrays from Fusion's script collection. It accepts `enable` and `disable`
 arrays of add-in Script IDs, which start/stop the add-ins and set whether each runs
 on Fusion startup. Fusion documents this collection as
 [`Application.scripts`](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Scripts.htm),
@@ -28,6 +30,14 @@ contract. FastAPI validates every declared parameter and publishes the exact
 contract at `/openapi.json`. `/exec` accepts `{"code": "..."}`; its code is a
 function body, so use `return` to produce a result. Single-line and multiline
 code are supported.
+
+`GET /components` returns components keyed by component ID, including assemblies
+without direct bodies. Each item contains lightweight body names and occurrence
+records with full paths, parents, depth, and effective visibility. Name,
+root-path, depth, and visibility filters run inside Fusion. Optional `details`
+adds the body hash and material used by export workflows. Body hashes include
+face-appearance assignments, while marker-plane interpretation remains owned by
+`POST /export`; `include_transform` adds occurrence matrices.
 
 ## Export to an application URL
 
@@ -46,6 +56,11 @@ server replaces `{url}` with a percent-encoded local download URL and responds
 with `303 See Other` and a `Location` header. Omitting `redirect_url`, or setting
 it to `null`, preserves the ordinary binary response. Invalid templates return
 `422` before Fusion exports anything.
+
+Queued UI clients may also provide `document` and `entity_token` guards. The
+server rejects a changed active document and resolves the opaque Fusion entity
+token before exporting, preventing a delayed request from silently targeting a
+same-named body in another design.
 
 The child retains the exported bytes in memory for **five minutes**, with a
 random token at `GET /downloads/{token}/{filename}`. The first GET atomically

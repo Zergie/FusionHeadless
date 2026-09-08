@@ -21,8 +21,10 @@ class ProcessSplitContractTests(unittest.TestCase):
         # -S removes site-packages so an accidental FastAPI/numpy dependency
         # in a package initializer fails even on a fully provisioned machine.
         result = subprocess.run(
-            [sys.executable, "-S", "-c", "import adapter, routes, mcp.tools; "
-             "import sys; assert 'mcp.endpoint' not in sys.modules"],
+            [sys.executable, "-S", "-c", "import adapter, routes, mcp.tools, startup; "
+             "import sys; assert 'mcp.endpoint' not in sys.modules; "
+             "assert 'startup.stl_export_job' not in sys.modules; "
+             "assert 'startup.stl_export_ui' not in sys.modules"],
             cwd=Path(__file__).resolve().parents[1],
             capture_output=True, text=True, timeout=10,
         )

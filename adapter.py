@@ -15,7 +15,7 @@ from typing import Any
 from bridge import FramedConnection
 from context import (FusionContext, generated_function, registry,
                      server_callback_scope)
-from extension_state import extension_fingerprint, reset_extensions
+from extension_state import close_startup_ui, extension_fingerprint, reset_extensions
 from process_conversation import ConversationResult, ProcessConversation
 
 
@@ -40,6 +40,29 @@ class _ChildProcess:
         assert process.stdin is not None and process.stdout is not None
         self.conversation = ProcessConversation(FramedConnection(process.stdout, process.stdin))
         self._cleanup_lock = threading.Lock()
+        self.startup_complete = threading.Event()
+        self.startup_error: BaseException | None = None
+        self.fingerprint: str | None = None
+        self.owns_startup = False
+        self.unexpected_exit = True
+        self.serve_thread: threading.Thread | None = None
+
+    def start_serving(self, handler: Any) -> None:
+        def serve() -> None:
+            try:
+                self.unexpected_exit = self.conversation.serve_forever(handler)
+            except BaseException as error:
+                self.startup_error = self.startup_error or error
+                self.unexpected_exit = True
+            finally:
+                if not self.startup_complete.is_set():
+                    self.startup_error = self.startup_error or RuntimeError(
+                        "child exited before reporting startup readiness"
+                    )
+                self.startup_complete.set()
+
+        self.serve_thread = threading.Thread(target=serve, daemon=True)
+        self.serve_thread.start()
 
     def terminate(self) -> None:
         if self.process.poll() is None:
@@ -65,7 +88,10 @@ class _ChildProcess:
                 for name in ("stdin", "stdout", "stderr"):
                     stream = getattr(self.process, name, None)
                     if stream is not None:
-                        stream.close()
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
 
 
 class FusionAdapter:
@@ -85,6 +111,7 @@ class FusionAdapter:
         self.project_root = Path(project_root or __file__).resolve().parent
         self.port = port
         self._child: _ChildProcess | None = None
+        self._replacement: _ChildProcess | None = None
         self._thread: threading.Thread | None = None
         self._lifecycle_lock = threading.Lock()
         self._startup: Future[bool] = Future()
@@ -175,43 +202,32 @@ class FusionAdapter:
                         return
                     continue
                 self._phase = _Phase.RECOVERING
-            child = None
+            child: _ChildProcess | None = None
             try:
-                popen_options: dict[str, Any] = {
-                    "cwd": self.project_root,
-                    "stdin": subprocess.PIPE,
-                    "stdout": subprocess.PIPE,
-                    "stderr": subprocess.PIPE,
-                    "env": {
-                        **os.environ,
-                        "PYTHONPATH": os.pathsep.join(
-                            filter(None, (str(self.project_root), os.environ.get("PYTHONPATH", "")))
-                        ),
-                    },
-                }
-                if os.name == "nt" and not self._show_child_terminal:
-                    # Fusion is a GUI application.  Suppress the console window
-                    # Windows would otherwise create for the Python child.
-                    popen_options["creationflags"] = subprocess.CREATE_NO_WINDOW
-                process = subprocess.Popen(
-                    [
-                        self.child_interpreter,
-                        "-m",
-                        "server",
-                        "--port",
-                        str(self.port),
-                    ],
-                    **popen_options,
-                )
-                child = _ChildProcess(process)
+                child = self._launch_child(standby=False)
                 with self._lifecycle_lock:
                     self._child = child
                 # ``stop`` may have won the race while Popen was creating the
                 # child.  Do not hand that child to the supervisor loop.
                 if self._shutdown_requested.is_set():
                     return
-                unexpected_exit = child.conversation.serve_forever(self._handle_child_command)
-                unexpected_exit = unexpected_exit or self._phase is _Phase.MISMATCH
+                child.start_serving(
+                    lambda message, current=child: self._handle_child_command(
+                        current, message, standby=False
+                    )
+                )
+                while child is not None:
+                    assert child.serve_thread is not None
+                    child.serve_thread.join()
+                    unexpected_exit = child.unexpected_exit or self._phase is _Phase.MISMATCH
+                    child.close()
+                    with self._lifecycle_lock:
+                        next_child = self._child if self._child is not child else None
+                        if self._child is child:
+                            self._child = None
+                    if next_child is None:
+                        break
+                    child = next_child
             except BaseException as error:
                 if not self._startup.done():
                     self._startup.set_exception(error)
@@ -223,6 +239,12 @@ class FusionAdapter:
                     with self._lifecycle_lock:
                         if self._child is child:
                             self._child = None
+                replacement = self._replacement
+                if replacement is not None and replacement is not self._child:
+                    replacement.close()
+                    with self._lifecycle_lock:
+                        if self._replacement is replacement:
+                            self._replacement = None
 
             if self._shutdown_requested.is_set():
                 return
@@ -239,19 +261,115 @@ class FusionAdapter:
             if not self._continue_recovery():
                 return
 
-    def _handle_child_command(self, message: dict[str, Any]) -> ConversationResult:
+    def _launch_child(self, *, standby: bool) -> _ChildProcess:
+        popen_options: dict[str, Any] = {
+            "cwd": self.project_root,
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "env": {
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    filter(None, (str(self.project_root), os.environ.get("PYTHONPATH", "")))
+                ),
+            },
+        }
+        if os.name == "nt" and not self._show_child_terminal:
+            # Fusion is a GUI application. Suppress the console window Windows
+            # would otherwise create for the Python child.
+            popen_options["creationflags"] = subprocess.CREATE_NO_WINDOW
+        command = [self.child_interpreter, "-m", "server", "--port", str(self.port)]
+        if standby:
+            command.append("--standby")
+        return _ChildProcess(subprocess.Popen(command, **popen_options))
+
+    def _prepare_replacement(self) -> None:
+        replacement = self._launch_child(standby=True)
+        with self._lifecycle_lock:
+            if self._shutdown_requested.is_set():
+                stopped = True
+            else:
+                self._replacement = replacement
+                stopped = False
+        if stopped:
+            replacement.close()
+            raise RuntimeError("adapter stopped while warming the replacement child")
+        replacement.start_serving(
+            lambda message: self._handle_child_command(replacement, message, standby=True)
+        )
+        if not replacement.startup_complete.wait(10):
+            self._discard_replacement(replacement)
+            raise TimeoutError("timed out while warming the replacement child")
+        if replacement.startup_error is not None:
+            self._discard_replacement(replacement)
+            raise RuntimeError(f"replacement child failed to start: {replacement.startup_error}")
+
+    def _discard_replacement(self, replacement: _ChildProcess) -> None:
+        with self._lifecycle_lock:
+            if self._replacement is replacement:
+                self._replacement = None
+        replacement.close()
+
+    def _activate_replacement(self, retiring: _ChildProcess) -> None:
+        with self._lifecycle_lock:
+            replacement = self._replacement
+        if replacement is None:
+            raise RuntimeError("replacement child is not ready")
+        try:
+            result = replacement.conversation.start_http_server()
+            replacement.owns_startup = bool(
+                isinstance(result, dict) and result.get("startup")
+            )
+        except Exception:
+            self._discard_replacement(replacement)
+            raise
+        with self._lifecycle_lock:
+            if self._shutdown_requested.is_set():
+                if self._replacement is replacement:
+                    self._replacement = None
+                stopped = True
+            else:
+                self._child = replacement
+                self._replacement = None
+                stopped = False
+        if stopped:
+            replacement.close()
+            raise RuntimeError("adapter stopped while activating the replacement child")
+        self._phase = _Phase.RUNNING
+        self._restart_attempts = 0
+
+    def _handle_child_command(
+        self, child: _ChildProcess, message: dict[str, Any], *, standby: bool
+    ) -> ConversationResult:
         command = message.get("command")
-        if command == "ready":
-            # `ready` is the only successful startup signal.
-            if message.get("fingerprint") != self._extension_fingerprint:
+        expected_ready = "standby-ready" if standby else "ready"
+        if command == "startup":
+            if standby:
+                raise RuntimeError("standby child cannot install startup features")
+            child.fingerprint = message.get("fingerprint")
+            if child.fingerprint != self._extension_fingerprint:
                 self._phase = _Phase.MISMATCH
-                assert self._child is not None
-                self._child.terminate()
+                return ConversationResult(
+                    error="child extension fingerprint mismatch",
+                    error_type="ExtensionFingerprintError",
+                )
+            return ConversationResult({"accepted": True})
+        if command == expected_ready:
+            child.fingerprint = message.get("fingerprint")
+            child.owns_startup = message.get("startup") is True
+            if not standby and child.fingerprint != self._extension_fingerprint:
+                child.startup_error = RuntimeError("child extension fingerprint mismatch")
+                if not standby:
+                    self._phase = _Phase.MISMATCH
+                child.terminate()
+                child.startup_complete.set()
                 return ConversationResult(close=True)
-            self._phase = _Phase.RUNNING
-            self._restart_attempts = 0
-            if not self._startup.done():
-                self._startup.set_result(True)
+            if not standby:
+                self._phase = _Phase.RUNNING
+                self._restart_attempts = 0
+                if not self._startup.done():
+                    self._startup.set_result(True)
+            child.startup_complete.set()
             return ConversationResult()
         if command == "exec":
             result = self._handle_exec(message)
@@ -265,15 +383,44 @@ class FusionAdapter:
             self._phase = _Phase.REPLACING
             self._show_child_terminal = show_terminal
             try:
+                self._prepare_replacement()
+            except Exception as error:
+                self._phase = _Phase.RUNNING
+                return ConversationResult(error=str(error), error_type="ReplacementStartupError")
+            if child.owns_startup:
+                try:
+                    child.conversation.retire_startup()
+                except Exception as error:
+                    assert self._replacement is not None
+                    self._discard_replacement(self._replacement)
+                    self._phase = _Phase.RUNNING
+                    return ConversationResult(
+                        error=str(error), error_type="StartupRetirementError"
+                    )
+            try:
                 self._reset_extensions_on_ui_thread()
             except Exception:
                 _LOG.exception("Fusion extension reset failed")
+                assert self._replacement is not None
+                self._discard_replacement(self._replacement)
                 self._phase = _Phase.RESET_REQUIRED
                 return ConversationResult(
                     error="Fusion extension reset failed",
                     error_type="FusionResetError",
                 )
+            assert self._replacement is not None
+            if self._replacement.fingerprint != self._extension_fingerprint:
+                fingerprint = self._replacement.fingerprint
+                self._discard_replacement(self._replacement)
+                return ConversationResult(
+                    error=("replacement extension fingerprint does not match Fusion: "
+                           f"{fingerprint!r}"),
+                    error_type="ReplacementFingerprintError",
+                )
             return ConversationResult({"action": message.get("kind", "restart")})
+        if command == "activate_replacement":
+            self._activate_replacement(child)
+            return ConversationResult({"action": "activated"})
         raise RuntimeError(f"unexpected child message: {message!r}")
 
     def _continue_recovery(self) -> bool:
@@ -352,16 +499,30 @@ class FusionAdapter:
             return child.conversation.call_server(name, list(args), kwargs)
         return call
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float = 5.0, *, teardown_startup: bool = True) -> None:
         with self._lifecycle_lock:
             self._shutdown_requested.set()
-            child, thread = self._child, self._thread
+            child, replacement, thread = self._child, self._replacement, self._thread
         if child is not None:
+            if teardown_startup and child.owns_startup and child.process.poll() is None:
+                try:
+                    child.conversation.shutdown()
+                except Exception:
+                    pass
             child.close(timeout)
+        if replacement is not None and replacement is not child:
+            replacement.close(timeout)
         if thread is not None:
             thread.join(timeout=timeout)
         # A worker still inside Popen retains ownership. It will observe the
         # stop request and close its late child before it can serve any work.
+
+    def stop_from_ui_thread(self, timeout: float = 5.0) -> None:
+        """Stop when Fusion already owns the calling UI thread."""
+        try:
+            close_startup_ui()
+        finally:
+            self.stop(timeout, teardown_startup=False)
 
     def __enter__(self) -> "FusionAdapter":
         self.start()

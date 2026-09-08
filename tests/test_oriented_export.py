@@ -152,6 +152,39 @@ class OrientedExportTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.options[0].filename))
         self.assertEqual([item.isLightBulbOn for item in self.root.bRepBodies], [False, False])
 
+    def test_occurrence_proxy_uses_native_contact_plane_for_local_stl(self):
+        native = self.root.bRepBodies[0]
+        native.faces[0].geometry.normal.asArray = lambda: [0, 1, 0]
+        native.faces[0].geometry.origin.asArray = lambda: [1, 2.3, 3]
+        native.faces[0].isParamReversed = False
+        native.nativeObject = None
+        native.assemblyContext = None
+        proxy_face = SimpleNamespace(
+            appearance=native.faces[0].appearance,
+            nativeObject=native.faces[0],
+            geometry=SimpleNamespace(
+                normal=SimpleNamespace(asArray=lambda: [0, 1, 0]),
+                origin=SimpleNamespace(asArray=lambda: [1, 2.36, 3]),
+            ),
+            isParamReversed=False,
+        )
+        proxy = SimpleNamespace(
+            name=native.name,
+            faces=[proxy_face],
+            parentComponent=self.root,
+            nativeObject=native,
+            assemblyContext=SimpleNamespace(fullPathName="Plate:1"),
+        )
+        self.host.app.activeProduct.findEntityByToken = lambda token: [proxy]
+
+        status, _, data = self.request(
+            body=["Plate"], entity_token="proxy-token", orient="Build Plate"
+        )
+
+        self.assertEqual(status, 200, data)
+        model = read_stl(data)
+        self.assertAlmostEqual(model.vectors.min(axis=(0, 1))[2], 0)
+
     def test_group_restores_visibility_on_success_and_processing_failure(self):
         self.root.bRepBodies.append(body("Unselected"))
         for normal, expected in [([0, 0, -1], 200), ([1, 0, 0], 500)]:

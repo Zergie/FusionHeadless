@@ -70,6 +70,29 @@ class ProcessConversation:
             "reply": True,
         })
 
+    def activate_replacement(self) -> Any:
+        return self._invoke({"command": "activate_replacement", "reply": True})
+
+    def start_http_server(self) -> Any:
+        return self._invoke({"command": "start_http_server", "reply": True})
+
+    def approve_startup(self, fingerprint: str) -> Any:
+        return self._invoke({
+            "command": "startup", "fingerprint": fingerprint, "reply": True,
+        })
+
+    def retire_startup(self) -> Any:
+        return self._invoke({"command": "retire_startup", "reply": True})
+
+    def shutdown(self) -> Any:
+        return self._invoke({"command": "shutdown", "reply": True})
+
+    def notify(self, message: dict[str, Any]) -> None:
+        """Send a protocol command which does not require a reply."""
+        if not isinstance(message, dict) or not message.get("command"):
+            raise ConversationError(f"invalid notification: {message!r}")
+        self._write(message)
+
     def call_server(
         self, name: str, args: list[Any], kwargs: dict[str, Any],
     ) -> Any:
@@ -147,7 +170,9 @@ class ProcessConversation:
             self._commands.put(error)
 
     def _invoke(self, message: dict[str, Any]) -> Any:
-        if message["command"] in ("exec", "restart") and getattr(self._execution, "server_callback", False):
+        if message["command"] in ("exec", "restart", "activate_replacement") and getattr(
+            self._execution, "server_callback", False
+        ):
             raise NestedFusionCallError(
                 "Nested Fusion calls are not supported: a server callback cannot "
                 "invoke Fusion or restart while Fusion is waiting for its result"

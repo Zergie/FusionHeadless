@@ -37,8 +37,28 @@ def _export_file(
         return output.read()
 
 
-def _export_selection(product: Any, component: str | None, names: list[str] | None):
+def _export_selection(
+    product: Any, component: str | None, names: list[str] | None,
+    entity_token: str | None = None,
+):
     """Resolve and validate export selectors before changing Fusion state."""
+    if entity_token is not None:
+        matches = list(product.findEntityByToken(entity_token) or [])
+        if not matches:
+            raise ValueError("Selected body is no longer available")
+        selected = [
+            item for item in matches
+            if names is None or _value(item, "name") in names
+        ]
+        if component is not None:
+            selected = [
+                item for item in selected
+                if _value(_value(item, "parentComponent"), "id") == component
+            ]
+        if len(selected) != 1:
+            raise ValueError("Selected body identity no longer matches the export request")
+        target = selected[0].parentComponent
+        return target, list(target.bRepBodies), selected
     root = product.rootComponent
     target = root
     if component is not None:
@@ -77,11 +97,15 @@ def _export_oriented_stl(
             if not isinstance(appearance, str) or appearance_marker not in appearance:
                 continue
             label = f"Component '{target.name}', body '{item.name}', contact face appearance {appearance!r}"
-            plane = adsk.core.Plane.cast(face.geometry)
+            # Fusion reports proxy-face geometry in root-component space, but
+            # STL export of a proxy body uses its native component coordinates.
+            # Read the matching native face so the plane and mesh share a frame.
+            plane_face = _value(face, "nativeObject") or face
+            plane = adsk.core.Plane.cast(plane_face.geometry)
             if plane is None:
                 raise ValueError(f"{label}: contact face must be planar")
             normal = list(plane.normal.asArray())
-            if face.isParamReversed:
+            if plane_face.isParamReversed:
                 normal = [-value for value in normal]
             planes.append({"normal": normal,
                            "point": [value * 10 for value in plane.origin.asArray()],
@@ -94,7 +118,7 @@ def _export_oriented_stl(
     # native bodies and hide child occurrences. Never transform the CAD model.
     changes = []
     if len(selected) == 1:
-        geometry = selected[0]
+        geometry = _value(selected[0], "nativeObject") or selected[0]
     else:
         geometry = target
         selected_names = {item.name for item in selected}
@@ -135,6 +159,14 @@ def export_route(
         list[str] | None,
         ApiParameter("One or more body names to export."),
     ] = None,
+    document: Annotated[
+        str | None,
+        ApiParameter("Optional active-document identity guard."),
+    ] = None,
+    entity_token: Annotated[
+        str | None,
+        ApiParameter("Optional Fusion entity token for an exact body selection."),
+    ] = None,
     orient: Annotated[
         str | None,
         ApiParameter("STL contact-face appearance substring (case-sensitive). Point matching faces down, center XY, and place the contact plane on Z=0. Omit or use null to keep the original orientation. Ignored for other formats."),
@@ -147,6 +179,14 @@ def export_route(
 ) -> bytes:
     """Export the requested Fusion design item and return its raw file bytes."""
     app = context.app
+    if document is not None:
+        active_document = _value(app, "activeDocument")
+        data_file = _value(active_document, "dataFile")
+        active_identity = _value(data_file, "id")
+        if not active_identity:
+            active_identity = f"name:{_value(active_document, 'name', '')}"
+        if str(active_identity) != document:
+            raise ValueError("Active document changed after the export was queued")
     product = _value(app, "activeProduct")
     export_manager = _value(product, "exportManager")
     if export_manager is None:
@@ -154,7 +194,7 @@ def export_route(
     format_name = format.lower()
     if format_name not in {"f3d", "step", "stl", "3mf", "obj"}:
         raise ValueError(f"Unsupported export format: {format_name}")
-    target, available, selected = _export_selection(product, component, body)
+    target, available, selected = _export_selection(product, component, body, entity_token)
     if format_name == "stl" and orient is not None:
         if body is None and list(_value(target, "occurrences", []) or []):
             raise ValueError("Oriented STL export of an assembly requires explicit body names in one component")

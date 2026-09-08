@@ -138,6 +138,7 @@ class FastApiServerTests(unittest.TestCase):
 
         self.assertEqual(document["info"]["version"], "0.2.0")
         self.assertEqual(set(document["paths"]["/files"]), {"get"})
+        self.assertEqual(set(document["paths"]["/document"]), {"get", "post"})
         self.assertEqual(set(document["paths"]["/render"]), {"post"})
         self.assertEqual(set(document["paths"]["/parameter"]), {"get", "post"})
         files = document["paths"]["/files"]["get"]["parameters"]

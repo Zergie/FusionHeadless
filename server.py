@@ -26,6 +26,7 @@ from extension_state import extension_fingerprint
 from fusion_invocation import FusionOperationInvoker
 from http_delivery import compile_delivery
 import routes
+import startup
 from mcp.endpoint import router as mcp_router
 from process_conversation import (ConversationResult, ProcessConversation,
                                   RemoteConversationError)
@@ -45,11 +46,15 @@ class ServerRuntime:
         self.application = application
         self._conversation = conversation
         self._restart_in_progress = threading.Event()
+        self._restart_lock = threading.Lock()
         self._http_server: uvicorn.Server | None = None
         self._listener: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._lockfile = Path(os.getenv("TEMP") or "/tmp") / "FusionHeadless.lock"
         self._owns_lock = False
+        self._port: int | None = None
+        self._startup_token = f"{os.getpid()}:{id(self)}"
+        self._startup_installed = False
 
     @property
     def restarting(self) -> bool:
@@ -66,28 +71,117 @@ class ServerRuntime:
             raise
 
     def request_restart(self, *, show_terminal: bool = False) -> None:
-        self._restart_in_progress.set()
+        with self._restart_lock:
+            if self._restart_in_progress.is_set():
+                raise RuntimeError("restart is already in progress")
+            self._restart_in_progress.set()
         try:
             if self._conversation is None:
                 raise RuntimeError("Fusion bridge is not connected")
             self._conversation.restart("restart", show_terminal=show_terminal)
         except Exception as error:
             if not (isinstance(error, RemoteConversationError)
-                    and error.error_type == "FusionResetError"):
+                    and error.error_type in ("FusionResetError", "ReplacementFingerprintError")):
                 self._restart_in_progress.clear()
             raise
+
+    def invoke_fusion(self, operation: Callable[..., Any], query: dict[str, Any]) -> Any:
+        """Invoke a registered Fusion operation for child-owned orchestration."""
+        if self._conversation is None:
+            raise RuntimeError("Fusion bridge is not connected")
+        return FusionOperationInvoker(self.execute_fusion).invoke(operation, query)
+
+    def install_startup(self) -> None:
+        if not self._startup_installed:
+            self._startup_installed = startup.install(
+                self,
+                f"http://127.0.0.1:{self._port}",
+                self._startup_token,
+            )
+
+    def uninstall_startup(self) -> None:
+        if self._startup_installed:
+            startup.uninstall(self, self._startup_token)
+            self._startup_installed = False
+
+    def retire_startup(self) -> None:
+        startup.cancel(self._startup_token)
+        self._startup_installed = False
+
+    def activate_replacement(self) -> None:
+        if self._conversation is None:
+            raise RuntimeError("Fusion bridge is not connected")
+        self._conversation.activate_replacement()
+
+    def stop_accepting(self) -> None:
+        """Release the HTTP port on Uvicorn's loop without draining connections."""
+        if self._http_server is not None:
+            accepting_servers = list(getattr(self._http_server, "servers", ()))
+            for accepting_server in accepting_servers:
+                accepting_server.close()
+        if self._listener is not None:
+            self._listener.close()
+            self._listener = None
+
+    def start_http_server(self) -> dict[str, bool]:
+        if self._port is None:
+            raise RuntimeError("server port is not configured")
+        self._start_http(self._port)
+        try:
+            self.install_startup()
+        except Exception:
+            self.stop_accepting()
+            raise
+        return {"listening": True, "startup": self._startup_installed}
 
     def complete_restart(self) -> None:
         """Called after the HTTP response; stop the actual owned HTTP server."""
         if self._http_server is not None:
             self._http_server.should_exit = True
-        if self._conversation is not None:
-            try:
-                self._conversation.close("requested replacement")
-            except (BrokenPipeError, OSError):
-                pass
+        try:
+            startup.cancel(self._startup_token)
+            self._startup_installed = False
+        finally:
+            if self._conversation is not None:
+                try:
+                    self._conversation.close("requested replacement")
+                except (BrokenPipeError, OSError):
+                    pass
 
-    def run(self, port: int) -> int:
+    def _remove_owned_lock(self) -> None:
+        if not self._owns_lock:
+            return
+        try:
+            if self._lockfile.read_text(encoding="utf-8") == str(os.getpid()):
+                self._lockfile.unlink()
+        except FileNotFoundError:
+            pass
+
+    def _start_http(self, port: int) -> None:
+        try:
+            # Port ownership is authoritative; write the lock only after binding.
+            self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._listener.bind(("127.0.0.1", port))
+            self._listener.listen()
+            self._listener.setblocking(False)
+        except Exception:
+            if self._listener is not None:
+                self._listener.close()
+                self._listener = None
+            raise
+
+        self._lockfile.parent.mkdir(parents=True, exist_ok=True)
+        self._lockfile.write_text(str(os.getpid()), encoding="utf-8")
+        self._owns_lock = True
+        config = uvicorn.Config(self.application, log_config=None, access_log=False)
+        self._http_server = uvicorn.Server(config)
+        self._thread = threading.Thread(
+            target=self._http_server.run, kwargs={"sockets": [self._listener]}, daemon=True,
+        )
+        self._thread.start()
+
+    def run(self, port: int, *, standby: bool = False) -> int:
         bridge_input = os.fdopen(os.dup(sys.stdin.fileno()), "rb")
         if os.name == "nt":
             # Native-library initialization can inspect stdin and block behind
@@ -96,52 +190,76 @@ class ServerRuntime:
                 os.dup2(null_input.fileno(), sys.stdin.fileno())
         bridge = FramedConnection(bridge_input, sys.stdout.buffer)
         self._conversation = ProcessConversation(bridge)
+        self._port = port
         self._restart_in_progress.clear()
         reader_started = False
-        try:
-            try:
-                # Port ownership is authoritative; write the lock only after binding.
-                self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self._listener.bind(("127.0.0.1", port))
-                self._listener.listen()
-                self._listener.setblocking(False)
-            except OSError as error:
-                if self._lockfile.exists():
-                    bridge.write({"command": "quit", "reason": "port already owned"})
-                else:
-                    notification = f"FusionHeadless could not bind localhost:{port}: {error}"
-                    bridge.write({"command": "exec",
-                                  "code": f"if ui is not None:\n    ui.messageBox({notification!r})"})
-                    bridge.write({"command": "quit", "reason": "port unavailable"})
-                return 0
+        conversation_thread: threading.Thread | None = None
+        conversation_errors: list[BaseException] = []
 
-            self._lockfile.parent.mkdir(parents=True, exist_ok=True)
-            self._lockfile.write_text(str(os.getpid()), encoding="utf-8")
-            self._owns_lock = True
-            config = uvicorn.Config(self.application, log_config=None, access_log=False)
-            self._http_server = uvicorn.Server(config)
-            self._thread = threading.Thread(
-                target=self._http_server.run, kwargs={"sockets": [self._listener]}, daemon=True,
-            )
-            self._thread.start()
-            bridge.write({"command": "ready", "fingerprint": extension_fingerprint()})
-            reader_started = True
-            self._conversation.serve_forever(_handle_server_command)
+        def serve_conversation() -> None:
+            try:
+                assert self._conversation is not None
+                self._conversation.serve_forever(_handle_server_command)
+            except BaseException as error:
+                conversation_errors.append(error)
+
+        try:
+            if standby:
+                conversation_thread = threading.Thread(
+                    target=serve_conversation,
+                    name="fusionheadless-child-conversation",
+                    daemon=True,
+                )
+                conversation_thread.start()
+                reader_started = True
+                self._conversation.notify({
+                    "command": "standby-ready",
+                    "fingerprint": extension_fingerprint(),
+                    "startup": False,
+                })
+            else:
+                try:
+                    self._start_http(port)
+                except OSError as error:
+                    if self._lockfile.exists():
+                        bridge.write({"command": "quit", "reason": "port already owned"})
+                    else:
+                        notification = f"FusionHeadless could not bind localhost:{port}: {error}"
+                        bridge.write({"command": "exec",
+                                      "code": f"if ui is not None:\n    ui.messageBox({notification!r})"})
+                        bridge.write({"command": "quit", "reason": "port unavailable"})
+                    return 0
+                conversation_thread = threading.Thread(
+                    target=serve_conversation,
+                    name="fusionheadless-child-conversation",
+                    daemon=True,
+                )
+                conversation_thread.start()
+                reader_started = True
+                fingerprint = extension_fingerprint()
+                self._conversation.approve_startup(fingerprint)
+                self.install_startup()
+                self._conversation.notify({
+                    "command": "ready",
+                    "fingerprint": fingerprint,
+                    "startup": self._startup_installed,
+                })
+            assert conversation_thread is not None
+            conversation_thread.join()
+            if conversation_errors:
+                raise conversation_errors[0]
             reader_started = False
             return 0
         finally:
+            startup.cancel(self._startup_token)
+            self._startup_installed = False
             if self._http_server is not None:
                 self._http_server.should_exit = True
             if self._thread is not None:
                 self._thread.join(timeout=5)
             if self._listener is not None:
                 self._listener.close()
-            if self._owns_lock:
-                try:
-                    self._lockfile.unlink()
-                except FileNotFoundError:
-                    pass
+            self._remove_owned_lock()
             # A fatal handler failure can leave a blocked reader. Let process
             # exit release that descriptor instead of blocking while closing it.
             if not reader_started:
@@ -151,6 +269,7 @@ class ServerRuntime:
             self._listener = None
             self._thread = None
             self._owns_lock = False
+            self._port = None
 
 
 _runtime = ServerRuntime(app)
@@ -312,7 +431,9 @@ async def restart(
 ) -> Any:
     try:
         await run_in_threadpool(_runtime.request_restart, show_terminal=options.show_terminal)
-        return {"status": "ok", "result": {"server": "Restarting.."}}
+        _runtime.stop_accepting()
+        await run_in_threadpool(_runtime.activate_replacement)
+        return {"status": "ok", "result": {"server": "Restarted"}}
     except Exception as error:
         return JSONResponse({"status": "error", "error": str(error)}, status_code=500)
     finally:
@@ -348,6 +469,19 @@ def _handle_server_command(message: dict[str, Any]) -> ConversationResult:
     """Serve one inbound command while the adapter is in Fusion code."""
     if message.get("command") == "quit":
         return ConversationResult(close=True)
+    if message.get("command") == "start_http_server":
+        return ConversationResult(_runtime.start_http_server())
+    if message.get("command") == "retire_startup":
+        _runtime.retire_startup()
+        return ConversationResult({"retired": True})
+    if message.get("command") == "shutdown":
+        try:
+            _runtime.uninstall_startup()
+            return ConversationResult({"action": "stopped"}, close=True)
+        except Exception as error:
+            return ConversationResult(
+                error=str(error), error_type=type(error).__name__, close=True
+            )
     if message.get("command") != "call":
         raise RuntimeError(f"unexpected server command: {message!r}")
     name = message.get("name")
@@ -362,8 +496,9 @@ def _handle_server_command(message: dict[str, Any]) -> ConversationResult:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=5000)
+    parser.add_argument("--standby", action="store_true")
     args = parser.parse_args()
-    return _runtime.run(args.port)
+    return _runtime.run(args.port, standby=args.standby)
 
 
 if __name__ == "__main__":

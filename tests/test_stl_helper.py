@@ -4,7 +4,6 @@ import contextlib
 import copy
 import io
 import json
-import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,11 +11,12 @@ import unittest
 from cli.match_with_files import main, match_with_files, str2hash
 
 
-def component(name="Bracket", identity="component-1", material="ABS", normal=None):
+def component(name="Bracket", identity="component-1", material="ABS"):
     return {
-        "id": identity, "name": name, "count": 2,
-        "bodies": [{"id": "body-1", "name": "Body1", "hash": "geometry-hash",
-                    "material": material, "orientation": [normal or [0, 0, -1]]}],
+        "id": identity, "name": name,
+        "occurrences": [{"path": f"{name}:1"}, {"path": f"{name}:2"}],
+        "bodies": [{"name": "Body1", "hash": "geometry-hash",
+                    "material": material}],
     }
 
 
@@ -36,13 +36,13 @@ class StlHelperTests(unittest.TestCase):
         path = self.folder / "bracket_x2.stl"
         path.write_bytes(b"existing mesh")
         part = component()
-        part["bodies"].append({**part["bodies"][0], "id": "body-2", "name": "Body2", "hash": "second-hash"})
+        part["bodies"].append({**part["bodies"][0], "name": "Body2", "hash": "second-hash"})
         original = copy.deepcopy(part)
         result = self.match(part)
         identity = str2hash(str(path))
         self.assertEqual(result, {identity + ".json": {
             "id": identity, "path": str(path), "bodies": ["Body1", "Body2"],
-            "body_hashes": ["geometry-hash", "second-hash"], "rotation": "-rx 0 -ry 0 -rz 0",
+            "body_hashes": ["geometry-hash", "second-hash"],
             "component_id": "component-1", "component_name": "Bracket",
             "suggested_name": "bracket_x2.stl",
         }})
@@ -57,7 +57,7 @@ class StlHelperTests(unittest.TestCase):
         self.assertEqual(item["suggested_name"], "[a]_lever_x2.stl")
         self.assertFalse(Path(item["path"]).exists())
 
-    def test_body_subfolder_and_legacy_count_insensitive_matching(self):
+    def test_body_subfolder_and_legacy_quantity_insensitive_matching(self):
         part = component()
         part["bodies"][0]["name"] = "Plate"
         folder = self.folder / "plate"
@@ -78,32 +78,6 @@ class StlHelperTests(unittest.TestCase):
         (self.folder / "b" / "bracket.stl").unlink()
         with self.assertRaisesRegex(ValueError, "different components"):
             self.match(component(), component(identity="component-2"))
-
-    def test_invalid_and_conflicting_build_plate_orientations_fail(self):
-        for orientations in ([], [[0, 0, 0]], [[1, 0, 0], [0, 1, 0]], [[float("nan"), 0, 1]]):
-            with self.subTest(orientations=orientations):
-                part = component()
-                part["bodies"][0]["orientation"] = orientations
-                with self.assertRaises(ValueError):
-                    self.match(part)
-        part = component()
-        part["bodies"].append({**part["bodies"][0], "name": "Body2", "orientation": [[0, 1, 0]]})
-        with self.assertRaisesRegex(ValueError, "different orientations"):
-            self.match(part)
-
-    def test_rotations_put_axial_and_oblique_normals_on_build_plate(self):
-        for vector in ([0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0],
-                       [0, -1, 0], [1, 2, 3], [-2, -3, -4]):
-            with self.subTest(vector=vector):
-                item = next(iter(self.match(component(normal=vector)).values()))
-                flags = item["rotation"].split()
-                rx, ry = math.radians(float(flags[1])), math.radians(float(flags[3]))
-                x, y, z = vector
-                y, z = y * math.cos(rx) - z * math.sin(rx), y * math.sin(rx) + z * math.cos(rx)
-                x, z = x * math.cos(ry) + z * math.sin(ry), -x * math.sin(ry) + z * math.cos(ry)
-                self.assertAlmostEqual(x, 0, places=5)
-                self.assertAlmostEqual(y, 0, places=5)
-                self.assertAlmostEqual(z, -math.hypot(*vector), places=5)
 
     def test_cli_writes_combined_and_individual_manifests_without_timestamp_churn(self):
         source, output = self.folder / "components.json", self.folder / "obj" / "printed.json"

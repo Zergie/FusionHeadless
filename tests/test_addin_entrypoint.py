@@ -8,6 +8,8 @@ import types
 import unittest
 from unittest.mock import patch
 
+from tests.test_stl_export_command import NativeUI
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,9 +19,9 @@ class FakeApplication:
         self.userInterface = FakeUi()
 
 
-class FakeUi:
+class FakeUi(NativeUI):
     def __init__(self) -> None:
-        self.messages: list[str] = []
+        super().__init__([], Path("unused.stl"))
 
     def messageBox(self, message: str) -> None:
         self.messages.append(message)
@@ -54,16 +56,17 @@ class FakeAdapter:
     def __init__(self, host) -> None:
         self.host = host
         self.started = 0
-        self.stopped = 0
+        self.stop_requests = []
         self.start_result = True
+        self.port = 5000
         self.__class__.instances.append(self)
 
     def start(self) -> bool:
         self.started += 1
         return self.start_result
 
-    def stop(self) -> None:
-        self.stopped += 1
+    def stop_from_ui_thread(self) -> None:
+        self.stop_requests.append("ui-thread")
 
 
 class ImmediateThread:
@@ -84,10 +87,13 @@ class AddinEntrypointTests(unittest.TestCase):
         self.adsk = types.ModuleType("adsk")
         core = types.ModuleType("adsk.core")
         core.Application = type("Application", (), {"get": staticmethod(lambda: self.app)})
+        core.CommandCreatedEventHandler = object
         self.adsk.core = core
+        self.adsk.fusion = types.ModuleType("adsk.fusion")
 
     def load_entrypoint(self):
-        with patch.dict(sys.modules, {"adsk": self.adsk, "adsk.core": self.adsk.core}):
+        with patch.dict(sys.modules, {"adsk": self.adsk, "adsk.core": self.adsk.core,
+                                     "adsk.fusion": self.adsk.fusion}):
             spec = importlib.util.spec_from_file_location("test_fusion_addin", ROOT / "FusionHeadless.py")
             module = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
@@ -115,7 +121,10 @@ class AddinEntrypointTests(unittest.TestCase):
         self.assertTrue(FakeHost.instances[0].started)
         self.assertTrue(FakeHost.instances[0].closed)
         self.assertEqual(FakeAdapter.instances[0].started, 1)
-        self.assertEqual(FakeAdapter.instances[0].stopped, 1)
+        self.assertEqual(FakeAdapter.instances[0].stop_requests, ["ui-thread"])
+        self.assertEqual(self.app.userInterface.definition.commandCreated.handlers, [])
+        self.assertFalse(self.app.userInterface.definition.deleted)
+        self.assertFalse(self.app.userInterface.control.deleted)
 
     def test_failed_background_start_shows_only_setup_guidance(self) -> None:
         entrypoint = self.load_entrypoint()
@@ -126,6 +135,7 @@ class AddinEntrypointTests(unittest.TestCase):
             return adapter
 
         entrypoint.FusionAdapter = create_failing_adapter
+        self.addCleanup(entrypoint.stop, {})
         entrypoint.run({})
 
         self.assertEqual(len(self.app.userInterface.messages), 1)

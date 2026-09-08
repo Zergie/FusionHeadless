@@ -20,11 +20,22 @@ from urllib.request import Request, urlopen
 DEFAULT_BASE_URL = "http://127.0.0.1:5000"
 MANIFEST_PATH = Path(__file__).resolve().parents[1] / "FusionHeadless.manifest"
 HTTP_METHODS = ("get", "post")
-CLI_VERB = "cli"
 
 
 class CliError(RuntimeError):
     """A concise error safe to show to a command-line user."""
+
+
+class _CommandHelpFormatter(argparse.HelpFormatter):
+    """List commands without repeating their generated choice inventory."""
+
+    def _format_action(self, action: argparse.Action) -> str:
+        if isinstance(action, argparse._SubParsersAction):
+            return "".join(
+                self._format_action(subaction)
+                for subaction in self._iter_indented_subactions(action)
+            )
+        return super()._format_action(action)
 
 
 @dataclass(frozen=True)
@@ -289,8 +300,14 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser(commands: dict[str, Command]) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="fusion_cli", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="fusion_cli",
+        description=__doc__,
+        formatter_class=_CommandHelpFormatter,
+    )
     parser.add_argument("--version", action="version", version=manifest_version())
+    parser.add_argument("--refresh", action="store_true",
+                        help="Refresh the versioned OpenAPI cache and exit.")
     subparsers = parser.add_subparsers(dest="verb", required=True)
     for command in sorted(commands.values(), key=lambda item: item.name):
         subparser = subparsers.add_parser(command.name, help=command.summary)
@@ -500,6 +517,8 @@ def _write_if_changed(path: Path, value: Any, raw: bytes | None = None) -> bool:
 def _format_human_json(value: Any) -> str:
     """Format a JSON result for an interactive terminal."""
     source = json.dumps(value, indent=2, ensure_ascii=False)
+    if not sys.stdout.isatty():
+        return source
     from pygments import highlight
     from pygments.formatters import TerminalFormatter
     from pygments.lexers import JsonLexer
@@ -531,17 +550,6 @@ def _emit(namespace: argparse.Namespace, command: Command, response: EndpointRes
 
 
 def powershell_parameters(document: dict[str, Any], verb: str) -> list[dict[str, Any]]:
-    if verb == CLI_VERB:
-        return [
-            {
-                "name": "Refresh",
-                "flag": "--refresh",
-                "kind": "boolean",
-                "description": "Refresh the versioned OpenAPI cache.",
-                "required": False,
-                "choices": [],
-            },
-        ]
     commands = commands_from_openapi(document)
     command = commands.get(verb)
     if command is None:
@@ -584,8 +592,8 @@ def powershell_parameters(document: dict[str, Any], verb: str) -> list[dict[str,
 
 
 def powershell_verbs(document: dict[str, Any]) -> list[str]:
-    """Return endpoint-derived verb names plus CLI management verbs."""
-    return sorted((*commands_from_openapi(document), CLI_VERB))
+    """Return endpoint-derived verb names."""
+    return sorted(commands_from_openapi(document))
 
 
 def _describe_powershell_verbs(arguments: list[str]) -> int | None:
@@ -604,9 +612,6 @@ def _describe_powershell(arguments: list[str]) -> int | None:
     if index + 1 >= len(arguments):
         raise CliError("--describe-powershell requires a verb")
     verb = arguments[index + 1]
-    if verb == CLI_VERB:
-        print(json.dumps(powershell_parameters({}, verb), ensure_ascii=False))
-        return 0
     base_url = _scan_base_url(arguments)
     document = load_schema(base_url)
     print(json.dumps(powershell_parameters(document, verb), ensure_ascii=False))
@@ -625,15 +630,13 @@ def run(arguments: list[str] | None = None) -> int:
     if described is not None:
         return described
     base_url = _scan_base_url(arguments)
-    if arguments and arguments[0] == CLI_VERB:
-        parser = argparse.ArgumentParser(prog=f"fusion_cli {CLI_VERB}")
+    if "--refresh" in arguments:
+        parser = argparse.ArgumentParser(prog="fusion_cli")
+        parser.add_argument("--refresh", action="store_true",
+                            help="Refresh the versioned OpenAPI cache and exit.")
         parser.add_argument("--base-url", default=base_url,
                             help=f"FusionHeadless origin (default: {DEFAULT_BASE_URL}).")
-        parser.add_argument("--refresh", action="store_true",
-                            help="Refresh the versioned OpenAPI cache.")
-        namespace = parser.parse_args(arguments[1:])
-        if not namespace.refresh:
-            parser.error(f"{CLI_VERB} requires --refresh")
+        namespace = parser.parse_args(arguments)
         load_schema(normalize_base_url(namespace.base_url), refresh=True)
         print("OpenAPI schema refreshed.")
         return 0

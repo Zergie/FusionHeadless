@@ -3,7 +3,7 @@
 `match_with_files.py` restores the local printable-body matching and export
 manifest workflow. It uses only Python's standard library and works offline.
 It accepts the unwrapped component JSON written by `fusion_cli components
---output ...`, or the old `{"status":"ok","result":...}` envelope.
+--details --output ...`, or the old `{"status":"ok","result":...}` envelope.
 
 Run from the YAMMU root after obtaining `obj/components.json`:
 
@@ -22,21 +22,18 @@ Both outputs can be written in one invocation; identical files retain their
 timestamps. Existing STL geometry is never modified, and stale manifests are
 not deleted.
 
-Records retain `id`, `path`, `bodies`, `body_hashes`, `rotation`, `component_id`,
+Records retain `id`, `path`, `bodies`, `body_hashes`, `component_id`,
 `component_name` and `suggested_name`. IDs use the legacy hash of the selected
 path, so use the same relative folder spelling and working directory across
-builds. Bodies with the same component, target path, suggested name and rotation
-share a record. Base/accent materials, quantity suffixes and body subfolders
-follow the original naming conventions. Missing files produce suggested paths;
-unused files and naming differences are reported on stderr.
+builds. Bodies with the same component, target path and suggested name share a
+record. Base/accent materials, quantity suffixes and body subfolders follow the
+original naming conventions. Missing files produce suggested paths; unused
+files and naming differences are reported on stderr.
 
-Ambiguous matches, conflicting output assignments and missing or invalid Build
-Plate orientations fail before writing manifests. Unlike the old helper, input
-component objects are not mutated and invalid printed bodies are not silently
-omitted. Rotation metadata describes sequential X then Y rotations to put the
-Build Plate normal along negative Z; oblique normals use Euler rotations rather
-than the old axis-angle approximation. This metadata remains available for
-legacy consumers; the oriented export endpoint reads the marked faces directly.
+Ambiguous matches and conflicting output assignments fail before writing
+manifests. Unlike the old helper, input component objects are not mutated and
+invalid printed bodies are not silently omitted. Build Plate marker validation
+belongs to the oriented export endpoint, which reads the marked faces directly.
 
 This helper prepares metadata. Export each component/body group through
 `fusion_cli export --orient "Build Plate"` to rotate, center X/Y, and place the

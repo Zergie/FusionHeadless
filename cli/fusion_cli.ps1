@@ -1,6 +1,6 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
+    [Parameter(Position = 0)]
     [ArgumentCompleter({
         param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
         try {
@@ -47,6 +47,9 @@ param(
     })]
     [string] $Verb,
 
+    [switch] $Help,
+    [switch] $Version,
+    [switch] $Refresh,
     [string] $BaseUrl = $(if ($env:FUSION_HEADLESS_URL) { $env:FUSION_HEADLESS_URL } else { 'http://127.0.0.1:5000' }),
     [double] $Timeout,
     [switch] $Raw,
@@ -57,11 +60,6 @@ param(
 
 dynamicparam {
     $dictionary = [System.Management.Automation.RuntimeDefinedParameterDictionary]::new()
-    # Verb completion happens before PowerShell binds the positional value.
-    # Endpoint-specific switches can only be derived after a verb is present.
-    if ([string]::IsNullOrWhiteSpace($Verb)) {
-        return $dictionary
-    }
     $script:CliDirectory = $PSScriptRoot
     $windowsPython = Join-Path $script:CliDirectory '.venv/Scripts/python.exe'
     $unixPython = Join-Path $script:CliDirectory '.venv/bin/python'
@@ -73,6 +71,11 @@ dynamicparam {
     $script:DynamicParameters = @{}
     if (-not (Test-Path -LiteralPath $script:CliPython)) {
         throw "fusion_cli: CLI environment not found. Run: py -m venv `"$(Join-Path $script:CliDirectory '.venv')`"; & `"$script:CliPython`" -m pip install -r `"$(Join-Path $script:CliDirectory 'requirements.txt')`""
+    }
+    # Verb completion happens before PowerShell binds the positional value.
+    # Endpoint-specific switches can only be derived after a verb is present.
+    if ([string]::IsNullOrWhiteSpace($Verb)) {
+        return $dictionary
     }
     $describe = @(
         (Join-Path $script:CliDirectory 'fusion_cli.py'),
@@ -112,6 +115,28 @@ dynamicparam {
 }
 
 end {
+    if ($Version) {
+        & $script:CliPython (Join-Path $script:CliDirectory 'fusion_cli.py') '--version'
+        exit $LASTEXITCODE
+    }
+    if ($Help) {
+        $arguments = @()
+        if ([string]::IsNullOrWhiteSpace($Verb)) {
+            $arguments += '--help'
+        } else {
+            $arguments += @($Verb, '--base-url', $BaseUrl, '--help')
+        }
+        & $script:CliPython (Join-Path $script:CliDirectory 'fusion_cli.py') @arguments
+        exit $LASTEXITCODE
+    }
+    if ($Refresh) {
+        $arguments = @('--refresh', '--base-url', $BaseUrl)
+        & $script:CliPython (Join-Path $script:CliDirectory 'fusion_cli.py') @arguments
+        exit $LASTEXITCODE
+    }
+    if ([string]::IsNullOrWhiteSpace($Verb)) {
+        throw 'fusion_cli: an endpoint verb or -Refresh is required'
+    }
     $arguments = @($Verb, '--base-url', $BaseUrl)
     foreach ($name in @('Raw')) {
         if ($PSBoundParameters.ContainsKey($name) -and $PSBoundParameters[$name]) {

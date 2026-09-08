@@ -18,6 +18,10 @@ class FusionContext:
 
     def call_server(self, operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Call an explicitly registered child operation from a Fusion operation."""
+        return self.bind_server(operation)(*args, **kwargs)
+
+    def bind_server(self, operation: Callable[..., Any]) -> Callable[..., Any]:
+        """Bind a child operation for a retained Fusion event handler."""
         name = getattr(operation, "__name__", None)
         definition = registry.server.get(name)
         if definition is None or definition.value is not operation:
@@ -25,7 +29,7 @@ class FusionContext:
         factory = _server_callbacks.get()
         if factory is None:
             raise RuntimeError("Server callbacks require an active Fusion invocation")
-        return factory(name)(*args, **kwargs)
+        return factory(name)
 
 
 _server_callbacks: ContextVar[Any] = ContextVar("fusion_server_callbacks", default=None)

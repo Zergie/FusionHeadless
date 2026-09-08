@@ -4,6 +4,7 @@ import json
 import socket
 from types import SimpleNamespace
 import unittest
+from urllib.parse import urlencode
 from urllib.request import urlopen
 
 from adapter import FusionAdapter
@@ -26,7 +27,7 @@ class UnreadableVector:
 
 EXPECTED_BODY = {
     "id": "95a20093-c8f7-05d1-0dea-71cbafe1cbaa",
-    "hash": "b921cdb0-4734-e28f-644d-e220dea1158c",
+    "hash": "94b3a57e-0981-60eb-4aa4-3d0adac74338",
     "name": "Bracket",
     "volume": 1.23457,
     "mass": 0.0,
@@ -53,13 +54,17 @@ def expected_json_body(**extra: object) -> dict[str, object]:
 def body_fixture() -> SimpleNamespace:
     build_plate_face = SimpleNamespace(
         appearance=SimpleNamespace(name="YAMMU Build Plate"),
-        geometry=SimpleNamespace(normal=Vector(0.0, 1.0, 0.0)),
+        geometry=SimpleNamespace(
+            normal=Vector(0.0, 1.0, 0.0), origin=Vector(0.0, 0.0, 0.0),
+        ),
         isParamReversed=True,
     )
     ignored_face = SimpleNamespace(
         appearance=SimpleNamespace(name="Default"),
-        geometry=SimpleNamespace(normal=Vector(1.0, 0.0, 0.0)),
-        isParamReversed=False,
+        geometry=SimpleNamespace(
+            normal=Vector(0.0, 1.0, 0.0), origin=Vector(0.0, 0.0, 5.0),
+        ),
+        isParamReversed=True,
     )
     return SimpleNamespace(
         name="Bracket",
@@ -89,7 +94,7 @@ class BodySerializationTests(unittest.TestCase):
     def test_body_payload_matches_main_contract(self) -> None:
         self.assertEqual(routes._bodies._body_dict(body_fixture()), EXPECTED_BODY)
 
-    def test_unreadable_build_plate_normal_is_ignored(self) -> None:
+    def test_unreadable_face_geometry_reports_hash_context(self) -> None:
         body = body_fixture()
         body.faces = [SimpleNamespace(
             appearance=SimpleNamespace(name="Build Plate"),
@@ -97,7 +102,8 @@ class BodySerializationTests(unittest.TestCase):
             isParamReversed=False,
         )]
 
-        self.assertEqual(routes._bodies._body_dict(body)["orientation"], [])
+        with self.assertRaisesRegex(RuntimeError, "body 'Bracket' face 0 normal"):
+            routes._bodies._body_dict(body)
 
 
 class BodyRouteHost(FakeFusionHost):
@@ -107,10 +113,25 @@ class BodyRouteHost(FakeFusionHost):
             id="component-1", name="Bracket Component", bRepBodies=[]
         )
         body = body_fixture()
+        self.body = body
         body.parentComponent = component
         component.bRepBodies.append(body)
-        occurrence = SimpleNamespace(component=component)
-        root = SimpleNamespace(bRepBodies=[], allOccurrences=[occurrence])
+        assembly = SimpleNamespace(id="assembly-1", name="Assembly", bRepBodies=[])
+        occurrences = [
+            SimpleNamespace(
+                component=assembly, name="Assembly:1", fullPathName="Assembly:1",
+                isVisible=True,
+            ),
+            SimpleNamespace(
+                component=component, name="Bracket:1",
+                fullPathName="Assembly:1+Bracket:1", isVisible=True,
+            ),
+            SimpleNamespace(
+                component=component, name="Bracket:2",
+                fullPathName="Assembly:1+Bracket:2", isVisible=False,
+            ),
+        ]
+        root = SimpleNamespace(bRepBodies=[], allOccurrences=occurrences)
         self.app.activeProduct = SimpleNamespace(rootComponent=root)
 
 
@@ -125,8 +146,10 @@ class BodyRouteTests(unittest.TestCase):
         self.assertTrue(self.adapter.start(timeout=5))
         self.addCleanup(self.adapter.stop)
 
-    def request(self, endpoint: object) -> dict[str, object]:
+    def request(self, endpoint: object, **query: object) -> dict[str, object]:
         path = route_path(endpoint)
+        if query:
+            path += "?" + urlencode(query)
         with urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=5) as response:
             self.assertEqual(response.status, 200)
             return json.load(response)
@@ -137,7 +160,7 @@ class BodyRouteTests(unittest.TestCase):
         self.assertEqual(response, {
             "status": "ok",
             "result": {
-                EXPECTED_BODY["id"]: expected_json_body(count=1),
+                EXPECTED_BODY["id"]: expected_json_body(count=2),
             },
         })
 
@@ -147,14 +170,81 @@ class BodyRouteTests(unittest.TestCase):
         self.assertEqual(response, {
             "status": "ok",
             "result": {
+                "assembly-1": {
+                    "id": "assembly-1",
+                    "name": "Assembly",
+                    "bodies": [],
+                    "occurrences": [{
+                        "name": "Assembly:1", "path": "Assembly:1",
+                        "parent": None, "depth": 0, "visible": True,
+                    }],
+                },
                 "component-1": {
                     "id": "component-1",
                     "name": "Bracket Component",
-                    "bodies": [expected_json_body()],
-                    "count": 1,
+                    "bodies": [{"name": "Bracket"}],
+                    "occurrences": [
+                        {
+                            "name": "Bracket:1", "path": "Assembly:1+Bracket:1",
+                            "parent": "Assembly:1", "depth": 1, "visible": True,
+                        },
+                        {
+                            "name": "Bracket:2", "path": "Assembly:1+Bracket:2",
+                            "parent": "Assembly:1", "depth": 1, "visible": False,
+                        },
+                    ],
                 },
             },
         })
+
+    def test_components_details_return_only_export_metadata(self) -> None:
+        response = self.request(routes.components_route, details="true", name="bracket")
+
+        body = expected_json_body()
+        self.assertEqual(response["result"], {
+            "component-1": {
+                "id": "component-1",
+                "name": "Bracket Component",
+                "bodies": [{key: body[key] for key in (
+                    "name", "hash", "material",
+                )}],
+                "occurrences": [
+                    {
+                        "name": "Bracket:1", "path": "Assembly:1+Bracket:1",
+                        "parent": "Assembly:1", "depth": 1, "visible": True,
+                    },
+                    {
+                        "name": "Bracket:2", "path": "Assembly:1+Bracket:2",
+                        "parent": "Assembly:1", "depth": 1, "visible": False,
+                    },
+                ],
+            },
+        })
+
+    def test_components_hash_tracks_face_appearance_assignment(self) -> None:
+        before = self.request(routes.components_route, details="true")
+        faces = self.host.body.faces
+        faces[0].appearance, faces[1].appearance = (
+            faces[1].appearance, faces[0].appearance,
+        )
+
+        after = self.request(routes.components_route, details="true")
+
+        self.assertNotEqual(
+            before["result"]["component-1"]["bodies"][0]["hash"],
+            after["result"]["component-1"]["bodies"][0]["hash"],
+        )
+
+    def test_components_filter_subtree_depth_and_visibility(self) -> None:
+        response = self.request(
+            routes.components_route,
+            root="Assembly:1", max_depth=1, visible="false",
+        )
+
+        self.assertEqual(
+            [item["path"] for item in response["result"]["component-1"]["occurrences"]],
+            ["Assembly:1+Bracket:2"],
+        )
 
 
 if __name__ == "__main__":

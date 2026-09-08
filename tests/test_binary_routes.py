@@ -412,6 +412,49 @@ class BinaryRouteTests(unittest.TestCase):
         self.assertEqual(body, b"\x89PNG\r\n\x1a\n\x00exact")
         self.assertEqual((self.host.image_options.width, self.host.image_options.height), (320, 200))
 
+    def test_render_keeps_temporary_visibility_until_queued_capture_finishes(self):
+        class Occurrence:
+            def __init__(self, name, light):
+                self.name = name
+                self.component = type("Component", (), {"bRepBodies": []})()
+                self.bRepBodies = []
+                self.childOccurrences = []
+                self.isLightBulbOn = light
+                self.isIsolated = False
+
+            @property
+            def isVisible(self):
+                return self.isLightBulbOn
+
+        target = Occurrence("Latch:1", False)
+        other = Occurrence("Other:1", True)
+        self.host.app.activeProduct.rootComponent.allOccurrences = [target, other]
+        pending = []
+        captured = []
+
+        def queue_capture(options):
+            pending.append(options)
+
+        def do_events():
+            self.host.do_events_calls += 1
+            if pending:
+                captured.append([target.isVisible, other.isVisible])
+                self.host._save_image(pending.pop())
+
+        self.host._adsk.doEvents = do_events
+        with patch.object(
+            self.host.app.activeViewport, "saveAsImageFileWithOptions",
+            side_effect=queue_capture,
+        ):
+            status, _, body = self.request(route_path(routes.render_route), {
+                "quality": "ShadedWithVisibleEdgesOnly", "isolate": ["Latch"],
+            })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"\x89PNG\r\n\x1a\n\x00exact")
+        self.assertEqual(captured, [[True, False]])
+        self.assertEqual([target.isLightBulbOn, other.isLightBulbOn], [False, True])
+
     def test_render_applies_visual_style_during_capture_and_restores_it(self):
         viewport = self.host.app.activeViewport
         styles = (
@@ -501,15 +544,234 @@ class BinaryRouteTests(unittest.TestCase):
         })()
         self.host.app.activeProduct.rootComponent.allOccurrences = [occurrence]
 
-        status, _, _ = self.request(route_path(routes.render_route), {
-            "quality": "ShadedWithVisibleEdgesOnly",
-            "isolate": ["Direct Drive x4"],
-        })
+        captured = []
+
+        def capture(options):
+            captured.append((occurrence.isVisible, child.isLightBulbOn))
+            self.host._save_image(options)
+
+        with patch.object(
+            self.host.app.activeViewport, "saveAsImageFileWithOptions", side_effect=capture,
+        ):
+            status, _, _ = self.request(route_path(routes.render_route), {
+                "quality": "ShadedWithVisibleEdgesOnly",
+                "isolate": ["Direct Drive x4"],
+            })
 
         self.assertEqual(status, 200)
-        self.assertTrue(occurrence.isIsolated)
-        self.assertTrue(occurrence.isLightBulbOn)
-        self.assertTrue(child.isLightBulbOn)
+        self.assertEqual(captured, [(True, True)])
+        self.assertFalse(occurrence.isIsolated)
+        self.assertFalse(occurrence.isLightBulbOn)
+        self.assertFalse(child.isLightBulbOn)
+
+    def test_render_matches_child_proxies_by_full_assembly_path(self):
+        child_from_all = type("Child", (), {
+            "name": "Child:1", "fullPathName": "Latch:1+Child:1",
+            "component": type("Component", (), {"bRepBodies": []})(),
+            "bRepBodies": [], "childOccurrences": [],
+            "isVisible": False, "isLightBulbOn": False, "isIsolated": False,
+        })()
+        child_from_parent = type("ChildProxy", (), {
+            "name": "Child:1", "fullPathName": "Latch:1+Child:1",
+            "component": type("Component", (), {"bRepBodies": []})(),
+            "bRepBodies": [], "childOccurrences": [],
+            "isVisible": False, "isLightBulbOn": False, "isIsolated": False,
+        })()
+        parent = type("Parent", (), {
+            "name": "Latch:1", "fullPathName": "Latch:1",
+            "component": type("Component", (), {"bRepBodies": []})(),
+            "bRepBodies": [], "childOccurrences": [child_from_parent],
+            "isVisible": False, "isLightBulbOn": False, "isIsolated": False,
+        })()
+        self.host.app.activeProduct.rootComponent.allOccurrences = [child_from_all, parent]
+        captured = []
+
+        def capture(options):
+            captured.append((parent.isLightBulbOn, child_from_all.isLightBulbOn))
+            self.host._save_image(options)
+
+        with patch.object(
+            self.host.app.activeViewport, "saveAsImageFileWithOptions", side_effect=capture,
+        ):
+            status, _, _ = self.request(route_path(routes.render_route), {
+                "quality": "ShadedWithVisibleEdgesOnly", "isolate": ["Latch"],
+            })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(captured, [(True, True)])
+        self.assertFalse(parent.isLightBulbOn)
+        self.assertFalse(child_from_all.isLightBulbOn)
+
+    def test_render_isolates_multiple_occurrences_together_and_restores_visibility(self):
+        class IsolationGroup:
+            current = None
+
+        group = IsolationGroup()
+
+        class Occurrence:
+            def __init__(self, name, light):
+                self.name = name
+                self.component = type("Component", (), {"bRepBodies": []})()
+                self.bRepBodies = []
+                self.childOccurrences = []
+                self.isLightBulbOn = light
+
+            @property
+            def isIsolated(self):
+                return group.current is self
+
+            @isIsolated.setter
+            def isIsolated(self, value):
+                if value:
+                    group.current = self
+                elif group.current is self:
+                    group.current = None
+
+            @property
+            def isVisible(self):
+                return self.isLightBulbOn and group.current in (None, self)
+
+        first = Occurrence("Latch v34:1", False)
+        second = Occurrence("Latch Lock v19:1", False)
+        other = Occurrence("Other:1", True)
+        occurrences = [first, second, other]
+        self.host.app.activeProduct.rootComponent.allOccurrences = occurrences
+        captured = []
+
+        def capture(options):
+            captured.append([item.isVisible for item in occurrences])
+            self.host._save_image(options)
+
+        with patch.object(
+            self.host.app.activeViewport, "saveAsImageFileWithOptions", side_effect=capture,
+        ):
+            status, _, _ = self.request(route_path(routes.render_route), {
+                "quality": "ShadedWithVisibleEdgesOnly",
+                "isolate": ["Latch v34:1", "Latch Lock v19:1"],
+            })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(captured, [[True, True, False]])
+        self.assertEqual([item.isLightBulbOn for item in occurrences], [False, False, True])
+        self.assertIsNone(group.current)
+
+    def test_render_undoes_one_visibility_transaction_and_keeps_clean_document_clean(self):
+        app = self.host.app
+        document = type("Document", (), {"isModified": False})()
+        app.activeDocument = document
+        transaction = {"active": False, "committed": False, "rolling_back": False, "history": []}
+        commands = []
+
+        class Occurrence:
+            def __init__(self, name, light):
+                self.name = name
+                self.component = type("Component", (), {"bRepBodies": []})()
+                self.bRepBodies = []
+                self.childOccurrences = []
+                self.isIsolated = False
+                self._light = light
+
+            @property
+            def isLightBulbOn(self):
+                return self._light
+
+            @isLightBulbOn.setter
+            def isLightBulbOn(self, value):
+                value = bool(value)
+                if value == self._light:
+                    return
+                if transaction["active"] and not transaction["rolling_back"]:
+                    transaction["history"].append((self, self._light))
+                self._light = value
+                if not transaction["rolling_back"]:
+                    document.isModified = True
+
+            @property
+            def isVisible(self):
+                return self._light
+
+        target = Occurrence("Latch:1", False)
+        other = Occurrence("Other:1", True)
+        other.isIsolated = True
+        self.host.app.activeProduct.rootComponent.allOccurrences = [target, other]
+
+        def execute(command):
+            commands.append(command)
+            if command == "Transaction.Start FusionHeadlessRender":
+                transaction["active"] = True
+                return "1"
+            if command == "Transaction.Commit":
+                transaction["active"] = False
+                transaction["committed"] = True
+                return "1"
+            if command == "Transaction.Abort":
+                transaction["rolling_back"] = True
+                for item, value in reversed(transaction["history"]):
+                    item.isLightBulbOn = value
+                transaction["history"].clear()
+                transaction["rolling_back"] = False
+                transaction["active"] = False
+                document.isModified = False
+                return "1"
+            if command == "Commands.Start UndoCommand":
+                self.assertTrue(transaction["committed"])
+                transaction["rolling_back"] = True
+                for item, value in reversed(transaction["history"]):
+                    item.isLightBulbOn = value
+                transaction["history"].clear()
+                transaction["rolling_back"] = False
+                transaction["committed"] = False
+                document.isModified = False
+                return ""
+            raise AssertionError(command)
+
+        app.executeTextCommand = execute
+        captured = []
+
+        def capture(options):
+            captured.append(([target.isVisible, other.isVisible], document.isModified))
+            self.host._save_image(options)
+
+        with patch.object(
+            self.host.app.activeViewport, "saveAsImageFileWithOptions", side_effect=capture,
+        ):
+            status, _, _ = self.request(route_path(routes.render_route), {
+                "quality": "ShadedWithVisibleEdgesOnly", "isolate": ["Latch"],
+            })
+
+        self.assertEqual(status, 200)
+        self.assertEqual(captured, [([True, False], True)])
+        self.assertEqual(commands, [
+            "Transaction.Start FusionHeadlessRender", "Transaction.Commit",
+            "Commands.Start UndoCommand",
+        ])
+        self.assertEqual([target.isLightBulbOn, other.isLightBulbOn], [False, True])
+        self.assertTrue(other.isIsolated)
+        self.assertFalse(document.isModified)
+
+    def test_failed_render_restores_isolation_and_visibility(self):
+        occurrence = type("Occurrence", (), {
+            "name": "Latch:1",
+            "component": type("Component", (), {"bRepBodies": []})(),
+            "bRepBodies": [],
+            "childOccurrences": [],
+            "isVisible": True,
+            "isLightBulbOn": False,
+            "isIsolated": False,
+        })()
+        self.host.app.activeProduct.rootComponent.allOccurrences = [occurrence]
+
+        with patch.object(
+            self.host.app.activeViewport, "saveAsImageFileWithOptions",
+            side_effect=RuntimeError("capture failed"),
+        ):
+            with self.assertRaises(HTTPError):
+                self.request(route_path(routes.render_route), {
+                    "quality": "ShadedWithVisibleEdgesOnly", "isolate": ["Latch"],
+                })
+
+        self.assertFalse(occurrence.isLightBulbOn)
+        self.assertFalse(occurrence.isIsolated)
 
     def test_render_keeps_explicitly_hidden_children_out_of_isolation(self):
         class Occurrence:
@@ -544,9 +806,9 @@ class BinaryRouteTests(unittest.TestCase):
                 )
 
                 self.assertEqual(status, 200)
-                self.assertTrue(parent.isIsolated)
-                self.assertTrue(parent.isLightBulbOn)
-                self.assertTrue(included.isLightBulbOn)
+                self.assertFalse(parent.isIsolated)
+                self.assertFalse(parent.isLightBulbOn)
+                self.assertFalse(included.isLightBulbOn)
                 self.assertFalse(excluded.isLightBulbOn)
 
     def test_unsupported_export_format_returns_json_error(self):

@@ -36,6 +36,9 @@ class FakeData:
 class FakeDocument:
     def __init__(self, file):
         self.dataFile = file
+        self.name = "Active design v3"
+        self.isModified = False
+        self.isSaved = True
         self.closed_with = None
         self.saved = False
 
@@ -169,7 +172,7 @@ class MutationRouteTests(unittest.TestCase):
     def request(self, path, values, method="POST"):
         request = Request(
             f"http://127.0.0.1:{self.port}{path}",
-            data=json.dumps(values).encode(),
+            data=json.dumps(values).encode() if method == "POST" else None,
             headers={"Content-Type": "application/json"},
             method=method,
         )
@@ -202,6 +205,28 @@ class MutationRouteTests(unittest.TestCase):
         )
         self.assertEqual((status, closed["result"]), (200, "File closed successfully."))
         self.assertTrue(self.host.app.activeDocument.closed_with)
+
+    def test_document_get_returns_active_document_state(self):
+        status, payload = self.request(
+            route_path(routes.document_route), {}, method="GET"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload, {
+            "status": "ok",
+            "result": {
+                "id": "file-1",
+                "name": "Active design v3",
+                "isModified": False,
+                "isSaved": True,
+            },
+        })
+
+        self.host.app.activeDocument = None
+        status, payload = self.request(
+            route_path(routes.document_route), {}, method="GET"
+        )
+        self.assertEqual((status, payload), (200, {"status": "ok", "result": None}))
 
     def test_document_open_takes_precedence_over_close(self):
         active = self.host.app.activeDocument
@@ -250,27 +275,6 @@ class MutationRouteTests(unittest.TestCase):
                 "error": "Failed to open file with ID 'file-1' within 30 seconds.",
             },
         )
-
-    def test_document_rejects_removed_and_missing_operations(self):
-        for values in (
-            {},
-            {"activate": "file-1"},
-            {"save": "true"},
-            {"saveAs": "copy"},
-        ):
-            with self.subTest(values=values):
-                status, payload = self.request_error(
-                    route_path(routes.document_route), values
-                )
-
-                self.assertEqual(status, 500)
-                self.assertEqual(
-                    payload,
-                    {
-                        "status": "error",
-                        "error": "Document operation must specify open or close.",
-                    },
-                )
 
     def test_parameter_update_returns_coerced_value(self):
         status, result = self.request(

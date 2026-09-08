@@ -16,13 +16,14 @@ from typing import Any
 from context import FusionContext, registry
 import routes
 import mcp.tools as mcp_tools
+import startup
 from mcp import registry as mcp_registry
 import routing
 
 
 # Keep the public package objects stable; their leaf modules are replaced as a
 # unit so deleted helpers and removed imports cannot survive a restart.
-_packages = {module.__name__: module for module in (routes, mcp_tools)}
+_packages = {module.__name__: module for module in (routes, mcp_tools, startup)}
 _ROOT = Path(__file__).resolve().parent
 
 
@@ -47,6 +48,7 @@ def reset_extensions() -> str:
     callers may retry the whole reset after correcting the failure.
     """
     try:
+        close_startup_ui()
         _clear_definitions()
         importlib.invalidate_caches()
         _unload_extensions()
@@ -65,6 +67,11 @@ def reset_extensions() -> str:
         _clear_definitions()
         _unload_extensions()
         raise RuntimeError(f"Fusion extension reset failed: {error}") from error
+
+
+def close_startup_ui() -> None:
+    """Close retained startup UI while already on Fusion's UI thread."""
+    startup.close_fusion_ui()
 
 
 def _clear_definitions() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any, Callable, Literal
 from context import server
 from routing import ApiParameter, api_route, BinaryResponse, RedirectURL
@@ -31,6 +32,11 @@ def _export_file(
         raise RuntimeError(f"Fusion failed to export {description}: {error}") from error
     if not succeeded:
         raise RuntimeError(f"Fusion failed to export {description}")
+    if not os.path.isfile(options.filename):
+        raise RuntimeError(
+            f"Fusion reported success exporting {description}, but did not create output file "
+            f"'{options.filename}'"
+        )
     if postprocess is not None:
         postprocess(options.filename)
     with open(options.filename, "rb") as output:
@@ -119,6 +125,7 @@ def _export_oriented_stl(
     changes = []
     if len(selected) == 1:
         geometry = _value(selected[0], "nativeObject") or selected[0]
+        changes = [(geometry, True)]
     else:
         geometry = target
         selected_names = {item.name for item in selected}

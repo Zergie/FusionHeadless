@@ -152,6 +152,24 @@ class OrientedExportTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.options[0].filename))
         self.assertEqual([item.isLightBulbOn for item in self.root.bRepBodies], [False, False])
 
+    def test_hidden_single_body_is_revealed_during_export_and_restored(self):
+        execute = self.host.app.activeProduct.exportManager.execute
+
+        def skip_hidden_body(options):
+            if not self.geometry[-1].isLightBulbOn:
+                self.states.append([item.isLightBulbOn for item in self.root.bRepBodies])
+                return True
+            return execute(options)
+
+        self.host.app.activeProduct.exportManager.execute = skip_hidden_body
+
+        status, _, data = self.request(body=["Plate"], orient="Build Plate")
+
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.states[-1], [True, False])
+        self.assertEqual([item.isLightBulbOn for item in self.root.bRepBodies], [False, False])
+        self.assertFalse(os.path.exists(self.options[-1].filename))
+
     def test_occurrence_proxy_uses_native_contact_plane_for_local_stl(self):
         native = self.root.bRepBodies[0]
         native.faces[0].geometry.normal.asArray = lambda: [0, 1, 0]
@@ -229,6 +247,19 @@ class OrientedExportTests(unittest.TestCase):
                     self.assertIn("export interrupted", json.loads(data)["error"])
                 self.assertEqual([item.isLightBulbOn for item in self.root.bRepBodies], [False, False])
                 self.assertFalse(os.path.exists(self.options[-1].filename))
+
+    def test_fusion_success_without_output_reports_export_context(self):
+        self.host.app.activeProduct.exportManager.execute = lambda options: True
+
+        status, _, data = self.request(body=["Plate"], orient="Build Plate")
+
+        self.assertEqual(status, 500)
+        message = json.loads(data)["error"]
+        self.assertIn("Fusion reported success exporting oriented STL for component 'Root'", message)
+        self.assertIn("did not create output file", message)
+        self.assertNotIn("No such file or directory", message)
+        self.assertEqual([item.isLightBulbOn for item in self.root.bRepBodies], [False, False])
+        self.assertFalse(os.path.exists(self.options[-1].filename))
 
     def test_rejects_bad_selection_missing_or_nonplanar_markings(self):
         for values, message in [({"body": []}, "at least one"),

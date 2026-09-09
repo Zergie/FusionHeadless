@@ -39,5 +39,5 @@ This helper prepares metadata. Export each component/body group through
 `fusion_cli export --orient "Build Plate"` to rotate, center X/Y, and place the
 contact plane at Z=0. There is no default appearance name in the export API.
 YAMMU's `make obj/STLs` integrates matching, oriented export, and incremental
-publication through its `tools/build_stls.py` helper. No external STL tools or
+publication through its `tools/export_stl.py` helper. No external STL tools or
 local Python `--eval` expressions are needed.

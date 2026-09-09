@@ -328,3 +328,12 @@ Read [architecture and development](docs/architecture.md) for adapter embedding,
 context serialization, callback restrictions, recovery, and verification commands.
 The process-level tests launch the real child against a fake Fusion host and
 cover HTTP, bridge framing, mutations, binary responses, MCP, and lifecycle behavior.
+
+With GNU Make installed, run `make setup-dev` once to install test dependencies,
+then `make check` to run the tests, compile Python sources, and check whitespace.
+Use `make setup-full` for both the server and CLI environments, or the individual
+`make setup` and `make setup-cli` targets. Run `make help` to list all targets.
+The Makefile works on Windows and
+POSIX systems; override the Python command as needed, for example
+`make check PYTHON=python3`. Use the same interpreter for `setup-dev` and `check`
+so binary dependencies match. Start the add-in through Fusion after setup.

@@ -58,11 +58,14 @@ class FakeAdapter:
         self.started = 0
         self.stop_requests = []
         self.start_result = True
+        self.start_error = None
         self.port = 5000
         self.__class__.instances.append(self)
 
     def start(self) -> bool:
         self.started += 1
+        if self.start_error is not None:
+            raise self.start_error
         return self.start_result
 
     def stop_from_ui_thread(self) -> None:
@@ -126,7 +129,7 @@ class AddinEntrypointTests(unittest.TestCase):
         self.assertFalse(self.app.userInterface.definition.deleted)
         self.assertFalse(self.app.userInterface.control.deleted)
 
-    def test_failed_background_start_shows_only_setup_guidance(self) -> None:
+    def test_background_start_without_readiness_reports_the_failure(self) -> None:
         entrypoint = self.load_entrypoint()
 
         def create_failing_adapter(host):
@@ -141,7 +144,29 @@ class AddinEntrypointTests(unittest.TestCase):
         self.assertEqual(len(self.app.userInterface.messages), 1)
         self.assertEqual(
             self.app.userInterface.messages[0],
-            "FusionHeadless setup is incomplete. Complete setup and see README.md.",
+            "FusionHeadless failed to start.\n\n"
+            "RuntimeError: server child stopped before reporting readiness.\n\n"
+            "See README.md for troubleshooting.",
+        )
+
+    def test_background_start_exception_reports_its_type_and_message(self) -> None:
+        entrypoint = self.load_entrypoint()
+
+        def create_failing_adapter(host):
+            adapter = FakeAdapter(host)
+            adapter.start_error = TimeoutError("timed out while launching the server child")
+            return adapter
+
+        entrypoint.FusionAdapter = create_failing_adapter
+        self.addCleanup(entrypoint.stop, {})
+        entrypoint.run({})
+
+        self.assertEqual(len(self.app.userInterface.messages), 1)
+        self.assertEqual(
+            self.app.userInterface.messages[0],
+            "FusionHeadless failed to start.\n\n"
+            "TimeoutError: timed out while launching the server child\n\n"
+            "See README.md for troubleshooting.",
         )
 
 

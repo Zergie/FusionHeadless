@@ -165,8 +165,10 @@ Register this repository folder as a local add-in in Fusion's **Scripts and Add-
 dialog, then run **FusionHeadless**. Its entry point is `FusionHeadless.py`.
 The adapter launches the server using the repository's `.venv` interpreter.
 
-If Fusion reports incomplete setup, finish the dependency installation above
-and restart Fusion.
+If FusionHeadless fails to start, Fusion shows the exception type and message.
+Install the dependencies above when the message identifies a missing package. If
+startup times out while Fusion is still loading other add-ins, start
+FusionHeadless again after Fusion finishes loading.
 
 ### 3. Check the connection
 

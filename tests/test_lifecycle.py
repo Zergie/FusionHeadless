@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import io
+import inspect
 import os
 from pathlib import Path
 import subprocess
@@ -86,6 +87,11 @@ class AdapterLifecycleTests(unittest.TestCase):
             if time.monotonic() >= deadline:
                 self.fail("lifecycle did not complete within two seconds")
             time.sleep(0.005)
+
+    def test_start_allows_thirty_seconds_by_default(self) -> None:
+        timeout = inspect.signature(FusionAdapter.start).parameters["timeout"]
+
+        self.assertEqual(timeout.default, 30.0)
 
     def test_initial_quit_or_eof_does_not_retry(self):
         for messages in ([self.quit], []):

@@ -58,17 +58,21 @@ def stop(context: Any) -> None:
 def _start_adapter(adapter: FusionAdapter, host: FusionHost) -> None:
     try:
         started = adapter.start()
-    except Exception:
-        started = False
-    if not started:
-        _show_setup_guidance(host)
+        if not started:
+            raise RuntimeError("server child stopped before reporting readiness.")
+    except Exception as error:
+        _show_startup_failure(host, error)
 
 
-def _show_setup_guidance(host: FusionHost) -> None:
+def _show_startup_failure(host: FusionHost, error: Exception) -> None:
+    detail = str(error).strip()
+    failure = type(error).__name__ if not detail else f"{type(error).__name__}: {detail}"
     try:
         host.dispatch(
             lambda: host.context()["ui"].messageBox(
-                "FusionHeadless setup is incomplete. Complete setup and see README.md."
+                "FusionHeadless failed to start.\n\n"
+                f"{failure}\n\n"
+                "See README.md for troubleshooting."
             )
         )
     except Exception:

@@ -138,7 +138,7 @@ class FusionAdapter:
         """Register explicitly decorated server exports used by Fusion code."""
         registry.register_decorated("server", *definitions)
 
-    def start(self, timeout: float = 10.0) -> bool:
+    def start(self, timeout: float = 30.0) -> bool:
         with self._lifecycle_lock:
             if self._thread is None or not self._thread.is_alive():
                 self._shutdown_requested.clear()
